@@ -1,0 +1,230 @@
+{
+  "schemaVersion": "1.0",
+  "generator": {
+    "name": "@example-org/em",
+    "version": "1.3.0"
+  },
+  "source": {
+    "path": "bridge/fixtures/model.em",
+    "sha256": "8e7119da831a618d6ac463478a18c5ffee5a7bb67bc57931c898a46f6e5180c4"
+  },
+  "model": {
+    "name": "Ping Fixture",
+    "personas": [
+      "Integrator"
+    ],
+    "contexts": [
+      "Pings",
+      "Notifications"
+    ],
+    "hasAutomation": true,
+    "slices": [
+      {
+        "key": "record-ping",
+        "name": "Record Ping",
+        "index": 0,
+        "line": 7,
+        "elements": [
+          {
+            "ref": "record-ping/ui.ping-console",
+            "kind": "ui",
+            "name": "Ping Console",
+            "line": 8,
+            "fields": null,
+            "note": null,
+            "issue": null,
+            "from": null,
+            "persona": "Integrator",
+            "context": null,
+            "again": false,
+            "logicalRef": null
+          },
+          {
+            "ref": "record-ping/command.record-ping",
+            "kind": "command",
+            "name": "Record Ping",
+            "line": 9,
+            "fields": [
+              {
+                "name": "postedAt",
+                "type": "Instant"
+              },
+              {
+                "name": "source",
+                "type": "string"
+              }
+            ],
+            "note": "slices/record-ping.md",
+            "issue": null,
+            "from": null,
+            "persona": null,
+            "context": null,
+            "again": false,
+            "logicalRef": null
+          },
+          {
+            "ref": "record-ping/event.ping-recorded",
+            "kind": "event",
+            "name": "Ping Recorded",
+            "line": 13,
+            "fields": [
+              {
+                "name": "postedAt",
+                "type": "Instant"
+              },
+              {
+                "name": "source",
+                "type": "string"
+              }
+            ],
+            "note": null,
+            "issue": null,
+            "from": null,
+            "persona": null,
+            "context": "Pings",
+            "again": false,
+            "logicalRef": null
+          }
+        ]
+      },
+      {
+        "key": "recent-pings",
+        "name": "Recent Pings",
+        "index": 1,
+        "line": 19,
+        "elements": [
+          {
+            "ref": "recent-pings/view.recent-pings",
+            "kind": "view",
+            "name": "Recent Pings",
+            "line": 20,
+            "fields": null,
+            "note": "slices/recent-pings.md",
+            "issue": null,
+            "from": [
+              {
+                "name": "Ping Recorded",
+                "ref": "record-ping/event.ping-recorded"
+              }
+            ],
+            "persona": null,
+            "context": null,
+            "again": false,
+            "logicalRef": null
+          },
+          {
+            "ref": "recent-pings/ui.recent-pings-view",
+            "kind": "ui",
+            "name": "Recent Pings View",
+            "line": 21,
+            "fields": null,
+            "note": null,
+            "issue": null,
+            "from": null,
+            "persona": "Integrator",
+            "context": null,
+            "again": false,
+            "logicalRef": null
+          }
+        ]
+      },
+      {
+        "key": "pings-to-notify",
+        "name": "Pings To Notify",
+        "index": 2,
+        "line": 24,
+        "elements": [
+          {
+            "ref": "pings-to-notify/view.pings-to-notify",
+            "kind": "view",
+            "name": "Pings To Notify",
+            "line": 25,
+            "fields": null,
+            "note": null,
+            "issue": null,
+            "from": [
+              {
+                "name": "Ping Recorded",
+                "ref": "record-ping/event.ping-recorded"
+              }
+            ],
+            "persona": null,
+            "context": null,
+            "again": false,
+            "logicalRef": null
+          },
+          {
+            "ref": "pings-to-notify/processor.notify-on-ping",
+            "kind": "processor",
+            "name": "Notify On Ping",
+            "line": 26,
+            "fields": null,
+            "note": "slices/pings-to-notify.md",
+            "issue": null,
+            "from": null,
+            "persona": null,
+            "context": null,
+            "again": false,
+            "logicalRef": null
+          }
+        ]
+      },
+      {
+        "key": "send-notification",
+        "name": "Send Notification",
+        "index": 3,
+        "line": 29,
+        "elements": [
+          {
+            "ref": "send-notification/command.send-notification",
+            "kind": "command",
+            "name": "Send Notification",
+            "line": 30,
+            "fields": [
+              {
+                "name": "pingId",
+                "type": "UUID"
+              },
+              {
+                "name": "channel",
+                "type": "string"
+              }
+            ],
+            "note": "slices/send-notification.md",
+            "issue": null,
+            "from": null,
+            "persona": null,
+            "context": null,
+            "again": false,
+            "logicalRef": null
+          },
+          {
+            "ref": "send-notification/event.notification-sent",
+            "kind": "event",
+            "name": "Notification Sent",
+            "line": 34,
+            "fields": [
+              {
+                "name": "pingId",
+                "type": "UUID"
+              },
+              {
+                "name": "channel",
+                "type": "string"
+              }
+            ],
+            "note": null,
+            "issue": null,
+            "from": null,
+            "persona": null,
+            "context": "Notifications",
+            "again": false,
+            "logicalRef": null
+          }
+        ]
+      }
+    ],
+    "arrows": []
+  },
+  "diagnostics": []
+}

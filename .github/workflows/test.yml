@@ -1,0 +1,38 @@
+name: Test
+
+# Typecheck + vitest for em-sdd-bridge.
+#
+# The `em` CLI is deliberately NOT installed here — it is a separate,
+# independently-versioned package this bridge only shells out to. Tests
+# that shell out to `em` gate on hasEm() and skip in CI; the same pattern
+# applies to `@typespec/compiler` via hasTsp(). See README.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Typecheck + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npx vitest run
