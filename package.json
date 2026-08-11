@@ -4,8 +4,8 @@
   "description": "Deterministic em-slice -> spec-kit bridge: writes spec.md directly from a ratified em slice doc without ever invoking /speckit.specify, plus status -> PR-link automation.",
   "type": "module",
   "bin": {
-    "em-sdd-bridge": "./dist/bridge.js",
-    "em-sdd-mark-implemented": "./dist/mark-implemented.js"
+    "em-sdd-bridge": "dist/bridge.js",
+    "em-sdd-mark-implemented": "dist/mark-implemented.js"
   },
   "main": "./dist/bridge.js",
   "files": [
@@ -22,7 +22,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "license": "MIT",
   "author": "milehimikey",

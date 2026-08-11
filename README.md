@@ -161,7 +161,9 @@ optimization only, not a requirement for the events-first check to work.
 
 Implements your project's slice-to-spec mapping contract (the doc that
 defines each slice-doc-template section's mapping to a `spec.md` section --
-in this bridge's originating project, `docs/slice-to-spec-mapping.md`) and a
+in this bridge's originating project, `docs/slice-to-spec-mapping.md`; that
+doc is a convention for the *consuming* spec-kit project to define, not a
+file this package ships or requires under that exact name) and a
 one-slice-per-branch / Automation-Translation-bundling granularity rule
 (bundling is permitted ONLY for a pattern-mandated Automation/Translation
 pair -- the reactor/translator slice plus the state-change slice it
