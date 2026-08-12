@@ -153,10 +153,11 @@ fail-closed:
 - **Design-completeness**: the slice doc(s) must resolve; the component dir
   (the directory holding the `.em` model) must have exactly one event model,
   with `.em` preferred -- a `.puml`-only component dir fails, naming the
-  legacy file; `slices/` must exist and contain at least one `*.md`;
-  `typespec/main.tsp` must exist and `npx tsp compile main.tsp --no-emit`
-  must exit 0. An unavailable TypeSpec compiler is itself a failure, never a
-  silent skip.
+  legacy file; `slices/` must exist and contain at least one `*.md`; and,
+  when the repo's declared contract source is TypeSpec (the default -- see
+  `.specify/em-sdd.json` below), `typespec/main.tsp` must exist and
+  `npx tsp compile main.tsp --no-emit` must exit 0. An unavailable TypeSpec
+  compiler is itself a failure, never a silent skip.
 - **Events-first**: every event the slice(s) emit or consume must already
   exist as a real type declaration (`class`, `data class`, `record`,
   `interface`, `object`, or TS `type X =`) somewhere in the consumer's
@@ -173,6 +174,36 @@ It exists ONLY so this package's own test suite can exercise bridge mechanics
 (allocation, spec rendering) independent of whether a real events-first
 source tree or a TypeSpec compiler is available in the environment running
 the tests. **Never use it for a real slice implementation.**
+
+### `.specify/em-sdd.json`: declaring the repo's contract source
+
+The TypeSpec checks encode one convention (contracts generated from
+`typespec/main.tsp` in the component dir). Repos that satisfy events-first
+some other way -- e.g. hand-authored event classes in the source tree, which
+the events-first check verifies independently -- declare that as
+repo-committed policy:
+
+```json
+{ "contractSource": "none" }
+```
+
+at `.specify/em-sdd.json` (relative to `--repo-root`). Only the two TypeSpec
+checks are skipped; every other check in both gates still runs. When the
+file is absent, the default is `"typespec"` -- existing consumers keep the
+full gate untouched. This is deliberately a committed file, not a CLI flag:
+which convention a repo follows is repo policy decided in review, not a
+per-invocation choice an autonomous agent could quietly vary. Malformed JSON
+or an unknown value is a gate **failure**, never a silent fallback.
+
+### Slice-doc dialects: body labels and YAML frontmatter
+
+The slice-doc parser reads the template's body-label style
+(`- **Status:** ready-to-implement`, `- **Pattern:** State Change`) first,
+and falls back to top-level YAML frontmatter scalars (`status:
+ready-to-implement`, `pattern: state-change`) for docs authored in the
+frontmatter dialect. When both are present the body label wins. This matters
+mostly for the readiness gate: a frontmatter-only doc previously read as
+`Status "(missing)"`; it now gates on its real status.
 
 ### `infrastructure-context.md`: a configurable narrowing hint
 

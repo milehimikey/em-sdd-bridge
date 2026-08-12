@@ -77,6 +77,34 @@ function bulletValue(text: string, label: string): string {
   return "";
 }
 
+/**
+ * Top-level scalar keys from a leading YAML frontmatter block (`---` ...
+ * `---`), if the doc has one. Fallback source for docs authored in the
+ * frontmatter style (e.g. `status: ready-to-implement` / `pattern:
+ * state-view` in YAML) rather than the body-label style this parser was
+ * originally built against -- both slice-doc dialects exist in real repos,
+ * and the bridge's readiness gate reading "(missing)" off a frontmatter-style
+ * doc was a live interop failure. Deliberately minimal: scalars only (list
+ * items and indented continuation lines are skipped); the body-label value
+ * always wins when both are present, since the body is the
+ * template-contract surface.
+ */
+function parseYamlFrontmatter(markdown: string): Map<string, string> {
+  const values = new Map<string, string>();
+  if (!markdown.startsWith("---\n") && !markdown.startsWith("---\r\n")) return values;
+  const lines = markdown.split("\n");
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^---\s*$/.test(line)) break; // closing fence
+    if (/^\s/.test(line) || line.trimStart().startsWith("-")) continue; // nested/list content
+    const m = line.match(/^([A-Za-z][\w-]*):\s*(.*)$/);
+    if (!m) continue;
+    const value = m[2].trim().replace(/^["']|["']$/g, "");
+    if (value) values.set(m[1].toLowerCase(), value);
+  }
+  return values;
+}
+
 function parseTable(text: string): string[][] {
   const rows: string[][] = [];
   for (const line of text.split("\n")) {
@@ -170,11 +198,14 @@ export function parseSliceDoc(markdown: string, sourceLabel = "<slice doc>"): Pa
 
   const frontmatterEnd = markdown.search(/^##\s+/m);
   const frontmatter = frontmatterEnd === -1 ? markdown : markdown.slice(0, frontmatterEnd);
+  const yaml = parseYamlFrontmatter(markdown);
 
-  const pattern = bulletValue(frontmatter, "Pattern");
+  // Body-label first (the template contract), YAML frontmatter as fallback
+  // for docs authored in the frontmatter dialect.
+  const pattern = bulletValue(frontmatter, "Pattern") || yaml.get("pattern") || "";
   const swimlane = bulletValue(frontmatter, "Swimlane");
-  const status = bulletValue(frontmatter, "Status");
-  const implementedIn = bulletValue(frontmatter, "Implemented in");
+  const status = bulletValue(frontmatter, "Status") || yaml.get("status") || "";
+  const implementedIn = bulletValue(frontmatter, "Implemented in") || yaml.get("implementedin") || "";
 
   const sections = splitSections(markdown);
 

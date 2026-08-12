@@ -439,3 +439,76 @@ describe.skipIf(!hasEm())("runBridge wiring (no --skip-design-gate)", () => {
     expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/WARNING.*--skip-design-gate/s));
   });
 });
+
+describe("contractSource configuration (.specify/em-sdd.json)", () => {
+  function withConfig(componentDir: string, contents: string): string {
+    // repoRoot and componentDir coincide in these tests (matching the
+    // missing-typespec test above); the config lives under repoRoot.
+    mkdirSync(path.join(componentDir, ".specify"), { recursive: true });
+    writeFileSync(path.join(componentDir, ".specify", "em-sdd.json"), contents);
+    return componentDir;
+  }
+
+  it('"contractSource": "none" skips ONLY the TypeSpec checks', () => {
+    const componentDir = buildComponentDir({ withTypespec: false });
+    withConfig(componentDir, JSON.stringify({ contractSource: "none" }));
+    const failures = checkDesignCompleteness({
+      repoRoot: componentDir,
+      modelPath: path.join(componentDir, "model.em"),
+      exportModel,
+      slices: [recordPingSlice()],
+    });
+    expect(failures.some((f) => /typespec/i.test(f))).toBe(false);
+    // The rest of the gate still ran and passed on this valid component dir.
+    expect(failures).toEqual([]);
+  });
+
+  it('"contractSource": "none" leaves the other checks intact (missing slices/ still fails)', () => {
+    const componentDir = buildComponentDir({ withTypespec: false });
+    withConfig(componentDir, JSON.stringify({ contractSource: "none" }));
+    rmSync(path.join(componentDir, "slices"), { recursive: true, force: true });
+    const failures = checkDesignCompleteness({
+      repoRoot: componentDir,
+      modelPath: path.join(componentDir, "model.em"),
+      exportModel,
+      slices: [recordPingSlice()],
+    });
+    expect(failures.some((f) => /no slices\/ directory/.test(f))).toBe(true);
+  });
+
+  it("an unknown contractSource value is a gate FAILURE, and the TypeSpec checks still run", () => {
+    const componentDir = buildComponentDir({ withTypespec: false });
+    withConfig(componentDir, JSON.stringify({ contractSource: "openapi" }));
+    const failures = checkDesignCompleteness({
+      repoRoot: componentDir,
+      modelPath: path.join(componentDir, "model.em"),
+      exportModel,
+      slices: [recordPingSlice()],
+    });
+    expect(failures.some((f) => /unknown "contractSource" value "openapi"/.test(f))).toBe(true);
+    expect(failures.some((f) => /No typespec\/main\.tsp found/.test(f))).toBe(true);
+  });
+
+  it("malformed em-sdd.json is a gate FAILURE (fail-closed), never a silent fallback", () => {
+    const componentDir = buildComponentDir({ withTypespec: false });
+    withConfig(componentDir, "{ not json");
+    const failures = checkDesignCompleteness({
+      repoRoot: componentDir,
+      modelPath: path.join(componentDir, "model.em"),
+      exportModel,
+      slices: [recordPingSlice()],
+    });
+    expect(failures.some((f) => /not valid JSON/.test(f))).toBe(true);
+  });
+
+  it("absent config keeps the default: TypeSpec checks required (unchanged behavior)", () => {
+    const componentDir = buildComponentDir({ withTypespec: false });
+    const failures = checkDesignCompleteness({
+      repoRoot: componentDir,
+      modelPath: path.join(componentDir, "model.em"),
+      exportModel,
+      slices: [recordPingSlice()],
+    });
+    expect(failures.some((f) => /No typespec\/main\.tsp found/.test(f))).toBe(true);
+  });
+});

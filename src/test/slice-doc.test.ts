@@ -71,3 +71,60 @@ describe("assertReadyToImplement", () => {
     expect(() => assertReadyToImplement(doc, "open-question.md")).toThrow(/unchecked Open Question/);
   });
 });
+
+describe("parseSliceDoc — YAML frontmatter dialect fallback", () => {
+  const frontmatterDoc = `---
+schemaVersion: 1
+id: track-order
+title: Track Order
+pattern: state-view
+status: ready-to-implement
+version: 1
+upstreamEvents:
+  - Order Placed
+---
+# Slice: Track Order
+
+- **Swimlane:** Customer → Order Status Page
+
+## Intent
+Show the customer where their order stands.
+
+## Open Questions
+- [x] Resolved question.
+`;
+
+  it("falls back to YAML frontmatter for status and pattern when body labels are absent", () => {
+    const doc = parseSliceDoc(frontmatterDoc, "track-order.md");
+    expect(doc.status).toBe("ready-to-implement");
+    expect(doc.pattern).toBe("state-view");
+    // And the readiness gate accepts it -- the live interop failure this fixes.
+    expect(() => assertReadyToImplement(doc, "track-order.md")).not.toThrow();
+  });
+
+  it("body-label values win over YAML frontmatter when both are present", () => {
+    const bothDialects = frontmatterDoc.replace(
+      "- **Swimlane:** Customer → Order Status Page",
+      "- **Swimlane:** Customer → Order Status Page\n- **Pattern:** State View\n- **Status:** draft"
+    );
+    const doc = parseSliceDoc(bothDialects, "track-order.md");
+    expect(doc.status).toBe("draft"); // body label, not the YAML "ready-to-implement"
+    expect(doc.pattern).toBe("State View");
+  });
+
+  it("strips surrounding quotes from YAML values and ignores nested/list lines", () => {
+    const quoted = frontmatterDoc.replace("status: ready-to-implement", 'status: "ready-to-implement"');
+    const doc = parseSliceDoc(quoted, "track-order.md");
+    expect(doc.status).toBe("ready-to-implement");
+    // The "- Order Placed" list item under upstreamEvents must not have been
+    // misread as a key.
+    expect(doc.pattern).toBe("state-view");
+  });
+
+  it("a doc with no YAML frontmatter and no body Status still reads as missing (gate stays closed)", () => {
+    const bare = "# Slice: Bare\n\n## Intent\nx\n";
+    const doc = parseSliceDoc(bare, "bare.md");
+    expect(doc.status).toBe("");
+    expect(() => assertReadyToImplement(doc, "bare.md")).toThrow(/not "ready-to-implement"/);
+  });
+});
