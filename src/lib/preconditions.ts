@@ -51,6 +51,59 @@ export interface PreconditionOptions {
   docOverride?: string;
 }
 
+const CONTRACT_SOURCES = ["typespec", "none"] as const;
+export type ContractSource = (typeof CONTRACT_SOURCES)[number];
+
+/**
+ * Repo-committed bridge configuration at `.specify/em-sdd.json`. Currently
+ * one key:
+ *
+ *   { "contractSource": "typespec" | "none" }
+ *
+ * `contractSource` declares where this repo's generated contracts come from,
+ * which decides whether the design-completeness gate's TypeSpec checks
+ * (typespec/main.tsp exists + compiles) apply:
+ *
+ *   - "typespec" (the DEFAULT when the file is absent): current behavior,
+ *     unchanged -- the checks run and their absence is a failure. Existing
+ *     consumers keep their full gate without touching anything.
+ *   - "none": this repo satisfies its contracts/events-first convention some
+ *     other way (e.g. hand-authored event classes in the source tree -- which
+ *     the events-first check still verifies independently); the TypeSpec
+ *     checks are skipped. Every OTHER check (slice docs resolvable, one .em
+ *     model, slices/ populated, events-first declarations) still runs.
+ *
+ * Deliberately a committed file, not a CLI flag: which convention a repo
+ * follows is repo policy, decided in review -- not a per-invocation choice an
+ * autonomous agent could quietly vary (the same reasoning that keeps these
+ * gates in code at all; see the module doc comment). Unreadable JSON or an
+ * unknown value is a gate FAILURE, never a silent fallback -- fail-closed.
+ */
+function readContractSource(repoRoot: string): { value: ContractSource; failure?: string } {
+  const configPath = path.join(repoRoot, ".specify", "em-sdd.json");
+  if (!existsSync(configPath)) return { value: "typespec" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch (err) {
+    return {
+      value: "typespec",
+      failure: `${configPath} exists but is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  const raw = (parsed as Record<string, unknown>)?.["contractSource"];
+  if (raw === undefined) return { value: "typespec" };
+  if (typeof raw !== "string" || !CONTRACT_SOURCES.includes(raw as ContractSource)) {
+    return {
+      value: "typespec",
+      failure:
+        `${configPath}: unknown "contractSource" value ${JSON.stringify(raw)} -- ` +
+        `expected one of: ${CONTRACT_SOURCES.join(", ")}.`,
+    };
+  }
+  return { value: raw as ContractSource };
+}
+
 /**
  * Runs `npx --no-install tsp <args>`. Deliberately never lets npx fall
  * through to installing from the registry: there is an unrelated,
@@ -291,17 +344,32 @@ export function checkDesignCompleteness(opts: PreconditionOptions): string[] {
   }
 
   // (d) typespec/main.tsp exists, and (e) it compiles -- a missing/unavailable
-  // compiler is itself a FAIL, never a skip.
-  const typespecDir = path.join(componentDir, "typespec");
-  const mainTsp = path.join(typespecDir, "main.tsp");
-  if (!existsSync(mainTsp)) {
-    failures.push(`No typespec/main.tsp found at ${mainTsp}.`);
-  } else {
-    try {
-      runTsp(["compile", "main.tsp", "--no-emit"], typespecDir);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      failures.push(`\`npx tsp compile main.tsp --no-emit\` failed in ${typespecDir}: ${message}`);
+  // compiler is itself a FAIL, never a skip. Applies only when the repo's
+  // declared contract source is TypeSpec (the default) -- see
+  // readContractSource: repos whose events-first convention isn't
+  // TypeSpec-generated (e.g. hand-authored event classes, still verified by
+  // checkEventsFirst) declare `"contractSource": "none"` in
+  // .specify/em-sdd.json and skip ONLY these two checks.
+  const contractSource = readContractSource(opts.repoRoot);
+  if (contractSource.failure) {
+    failures.push(contractSource.failure);
+  }
+  if (contractSource.value === "typespec") {
+    const typespecDir = path.join(componentDir, "typespec");
+    const mainTsp = path.join(typespecDir, "main.tsp");
+    if (!existsSync(mainTsp)) {
+      failures.push(
+        `No typespec/main.tsp found at ${mainTsp}. If this project's contracts are not ` +
+          `TypeSpec-generated, declare { "contractSource": "none" } in .specify/em-sdd.json ` +
+          `(the events-first source check still applies either way).`
+      );
+    } else {
+      try {
+        runTsp(["compile", "main.tsp", "--no-emit"], typespecDir);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        failures.push(`\`npx tsp compile main.tsp --no-emit\` failed in ${typespecDir}: ${message}`);
+      }
     }
   }
 
