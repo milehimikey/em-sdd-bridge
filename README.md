@@ -2,8 +2,9 @@
 
 A deterministic `em`-slice → spec-kit bridge: writes `spec.md` directly from
 a ratified [`em`](https://github.com/milehimikey/em) slice doc (without ever
-running `/speckit.specify`), plus status → PR-link automation
-(`mark-implemented`). Ships as a standalone, versioned npm package with two
+running `/speckit.specify`) — or, with `--symlink`, skips rendering entirely
+and links `spec.md` straight to the slice doc — plus status → PR-link
+automation (`mark-implemented`). Ships as a standalone, versioned npm package with two
 CLI entry points, `em-sdd-bridge` and `em-sdd-mark-implemented`.
 
 ## Install
@@ -48,7 +49,41 @@ npx em-sdd-bridge <slice-key> [<slice-key>] [--dry-run]
 npx em-sdd-mark-implemented <slice-key> <pr-url>
 ```
 
-Both default to locating the repo root (nearest ancestor `.specify/` directory)
+### `--symlink`: redirection mode (no rendered spec.md at all)
+
+```sh
+npx em-sdd-bridge <slice-key> --symlink [--dry-run]
+```
+
+The default mode above *emits*: it renders the slice into spec-kit's spec.md
+format. `--symlink` *redirects* instead: allocation runs exactly the same
+(branch + `specs/NNN-slug/` dir, same gates -- minimum `em` version, slice
+readiness, pattern validation, design-completeness/events-first), but the
+template-copied `spec.md` is replaced with a **relative symlink to the
+ratified slice doc itself**. No spec content is generated, because none is
+needed: spec-kit's phase consumers are prompts, not parsers -- they read
+whatever `FEATURE_SPEC` resolves to -- and the shell layer's
+`[[ -f spec.md ]]` checks pass through the link. The slice doc *is* the
+spec; nothing between the slice and the code is committed.
+
+Since there is no rendered header to carry the `**Traceability**:` line, the
+command prints it on success -- paste it into the PR description.
+
+Caveats:
+
+- **Two-doc bundles can't be linked** -- a symlink points at one file. A
+  pattern-pair that shares a single doc still works (pass `--doc`); a
+  two-doc pair needs the default emission mode.
+- **POSIX only.** Symlink creation on Windows requires elevated privileges;
+  use emission there.
+- Downstream spec-kit prompts written against spec-template section names
+  (acceptance scenarios, FR-00N) read the slice doc's sections instead
+  (`## Scenarios`, `## Invariants`); a one-paragraph preamble in your
+  project's phase-prompt overrides covers the vocabulary. The mapping is the
+  same one `docs/slice-to-spec-mapping.md` specifies -- applied as
+  instructions instead of as a rendered file.
+
+Both commands default to locating the repo root (nearest ancestor `.specify/` directory)
 and the sole `*.em` model file found there; override with `--repo-root` /
 `--model` if your project names its model file something else, keeps more
 than one `.em` file at the root, or keeps its model in a component

@@ -5,7 +5,7 @@
  * Usage:
  *   npx em-sdd-bridge <slice-key> [<slice-key>]
  *     [--repo-root <path>] [--model <path.em>] [--slices-dir <dir>]
- *     [--dry-run] [--skip-design-gate]
+ *     [--symlink] [--dry-run] [--skip-design-gate]
  *
  * See lib/*.ts for the pipeline: minimum-em-version check -> em export ->
  * locate + parse slice doc(s) -> validate readiness + (for 2 keys) the
@@ -13,9 +13,27 @@
  * allocate the spec-kit feature (git branch, created + checked out, via the
  * installed git extension when present; spec dir, under the SAME number,
  * via the installed create-new-feature.sh -- see lib/allocate-feature.ts) ->
- * render spec.md per your project's slice-to-spec mapping contract.
+ * materialize spec.md.
  *
- * Never calls /speckit.specify -- spec.md is written directly.
+ * Materialization has two modes (the "who bends" adapter decision):
+ *
+ *   - default (emission): render spec.md per your project's slice-to-spec
+ *     mapping contract. The fallback adapter, and the executable proof the
+ *     mapping is total.
+ *   - --symlink (redirection): write NO rendered content at all -- replace
+ *     the template-copied spec.md with a relative symlink to the ratified
+ *     slice doc itself. Downstream phases consume the slice doc directly;
+ *     shell-layer existence checks ([[ -f spec.md ]]) pass through the
+ *     link. Every gate this bridge runs (minimum em version, readiness,
+ *     pattern validation, design-completeness/events-first) runs identically
+ *     in both modes -- the redirect keeps the gates and drops only the
+ *     rendering. The Traceability line, which emission renders into spec.md,
+ *     is returned/printed instead for the PR description. Two-doc bundles
+ *     have no single file to link (see the guard below). POSIX only: real
+ *     symlink creation on Windows requires elevated privileges -- use
+ *     emission there.
+ *
+ * Never calls /speckit.specify -- spec.md is written directly (or linked).
  *
  * --skip-design-gate bypasses the design-completeness / events-first
  * preconditions (lib/preconditions.ts) entirely and prints a loud warning
@@ -28,7 +46,7 @@
  * close.
  */
 
-import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertMinimumEmVersion } from "./lib/check-em-version.js";
@@ -39,7 +57,7 @@ import { validateSliceKeys } from "./lib/pattern-validate.js";
 import { locateSliceDoc } from "./lib/locate-slice-doc.js";
 import { parseSliceDoc, assertReadyToImplement } from "./lib/slice-doc.js";
 import { allocateFeature } from "./lib/allocate-feature.js";
-import { buildSpecMarkdown } from "./lib/spec-builder.js";
+import { buildSpecMarkdown, buildTraceabilityLine } from "./lib/spec-builder.js";
 import { assertPreconditions } from "./lib/preconditions.js";
 import { BridgeError } from "./lib/bridge-error.js";
 import type { ExportedSlice } from "./lib/export-model.js";
@@ -48,7 +66,19 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function runBridge(argv: string[]): { branchName: string; specFile: string | null; content: string } {
+export interface BridgeResult {
+  branchName: string;
+  specFile: string | null;
+  /** Emission: the full rendered spec.md. Symlink mode: the Traceability
+   *  block for the PR description (there is no rendered file to carry it). */
+  content: string;
+  mode: "emit" | "symlink";
+  /** Symlink mode only: the relative link target (from the spec dir to the
+   *  slice doc), exactly as written into the symlink. */
+  symlinkTarget?: string;
+}
+
+export function runBridge(argv: string[]): BridgeResult {
   // Minimum-em-version check runs before any other precondition -- an
   // unsupported `em` invalidates everything downstream (export shape,
   // slice/pattern semantics), so failing here first keeps later error
@@ -58,7 +88,7 @@ export function runBridge(argv: string[]): { branchName: string; specFile: strin
   const { positional, flags, booleans } = parseArgs(
     argv,
     ["--repo-root", "--model", "--slices-dir", "--doc"],
-    ["--dry-run", "--skip-design-gate"]
+    ["--dry-run", "--skip-design-gate", "--symlink"]
   );
 
   const keys = positional;
@@ -83,6 +113,19 @@ export function runBridge(argv: string[]): { branchName: string; specFile: strin
   // Needed when the export lost the note binding (see locate-slice-doc.ts), and for
   // pattern-pair bundles, which share ONE doc (see your project's mapping contract).
   const docOverride = flags["doc"];
+
+  const symlinkMode = booleans.has("symlink");
+  if (symlinkMode && isBundle && !docOverride) {
+    // A symlink points at exactly one file; a two-doc pattern-pair has no
+    // single source to link. A pair that genuinely shares ONE doc stays
+    // linkable via --doc; a two-doc pair uses emission (which interleaves
+    // both docs into one rendering).
+    throw new BridgeError(
+      "--symlink cannot represent a two-doc bundle: a symlink points at one file, but this " +
+        "pattern-pair resolves to two slice docs. Either pass --doc <shared-doc> (when the pair " +
+        "shares a single doc) or drop --symlink and let the bridge render the bundled spec.md."
+    );
+  }
 
   // Design-completeness + events-first preconditions, run BEFORE feature
   // allocation and fail-closed. See lib/preconditions.ts.
@@ -133,6 +176,49 @@ export function runBridge(argv: string[]): { branchName: string; specFile: strin
     ? [primaryLocated.relativePath, secondaryLocated!.relativePath]
     : [primaryLocated.relativePath];
 
+  if (symlinkMode) {
+    // Redirection: no rendering. The spec dir's spec.md becomes a relative
+    // symlink to the ratified slice doc, so every downstream consumer --
+    // shell scripts checking existence, phase prompts reading FEATURE_SPEC --
+    // resolves straight through to the source. Relative (not absolute) so
+    // the link survives clones, worktrees, and repo moves.
+    const symlinkTarget = path.relative(path.dirname(allocated.specFile), primaryLocated.absolutePath);
+    // Emission renders the Traceability line into spec.md's header; with no
+    // rendered file, it travels via the PR description instead.
+    const traceability = buildTraceabilityLine({
+      keys: isBundle ? [primary.key, secondary!.key] : [primary.key],
+      pattern: primaryDoc.pattern,
+      modelName: path.basename(modelPath),
+      modelDir: path.dirname(modelPath),
+      specFilePath: allocated.specFile,
+      sliceDocRelPaths,
+    });
+
+    if (dryRun) {
+      // Nothing was created (both allocation scripts ran with their own
+      // --dry-run), so there is nothing to link -- report what would happen.
+      return {
+        branchName: allocated.branchName,
+        specFile: null,
+        content: traceability,
+        mode: "symlink",
+        symlinkTarget,
+      };
+    }
+
+    // create-new-feature.sh copied the spec template into place; the symlink
+    // replaces it. rm first: symlinkSync refuses to overwrite.
+    rmSync(allocated.specFile, { force: true });
+    symlinkSync(symlinkTarget, allocated.specFile);
+    return {
+      branchName: allocated.branchName,
+      specFile: allocated.specFile,
+      content: traceability,
+      mode: "symlink",
+      symlinkTarget,
+    };
+  }
+
   const content = buildSpecMarkdown({
     branchName: allocated.branchName,
     date: todayIso(),
@@ -152,11 +238,11 @@ export function runBridge(argv: string[]): { branchName: string; specFile: strin
   if (dryRun) {
     // The script's own --dry-run creates no files, so spec.md has nowhere to
     // land in the real tree -- print it instead of writing.
-    return { branchName: allocated.branchName, specFile: null, content };
+    return { branchName: allocated.branchName, specFile: null, content, mode: "emit" };
   }
 
   writeFileSync(allocated.specFile, content, "utf8");
-  return { branchName: allocated.branchName, specFile: allocated.specFile, content };
+  return { branchName: allocated.branchName, specFile: allocated.specFile, content, mode: "emit" };
 }
 
 // realpathSync on both sides -- npm installs `bin` entries as symlinks
@@ -170,7 +256,17 @@ const isMain =
 if (isMain) {
   try {
     const result = runBridge(process.argv.slice(2));
-    if (result.specFile) {
+    if (result.mode === "symlink") {
+      if (result.specFile) {
+        console.log(`Linked ${result.specFile} -> ${result.symlinkTarget} on branch ${result.branchName}`);
+      } else {
+        console.log(
+          `--- dry-run: would link spec.md -> ${result.symlinkTarget} on branch ${result.branchName} ---`
+        );
+      }
+      console.log(`Traceability (for the PR description):`);
+      console.log(result.content);
+    } else if (result.specFile) {
       console.log(`Wrote ${result.specFile} on branch ${result.branchName}`);
     } else {
       console.log(`--- dry-run: spec.md for branch ${result.branchName} ---`);

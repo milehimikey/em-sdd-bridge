@@ -76,18 +76,15 @@ class Counter {
   }
 }
 
-export function buildSpecMarkdown(opts: BuildSpecOptions): string {
-  const { primaryDoc, secondaryDoc } = opts;
-  const isBundle = !!secondaryDoc;
+/** The subset of BuildSpecOptions the Traceability line needs — shared by the
+ *  emit path (rendered into spec.md's header) and the symlink path (printed
+ *  for the PR description, since there is no rendered file to carry it). */
+export type TraceabilityOptions = Pick<
+  BuildSpecOptions,
+  "keys" | "pattern" | "modelName" | "modelDir" | "specFilePath" | "sliceDocRelPaths"
+>;
 
-  const lines: string[] = [];
-
-  // --- Header --------------------------------------------------------
-  lines.push(`# Feature Specification: ${primaryDoc.name}`, "");
-  lines.push(`**Feature Branch**: \`${opts.branchName}\``, "");
-  lines.push(`**Created**: ${opts.date}`, "");
-  lines.push(`**Status**: Draft`, "");
-
+export function buildTraceabilityLine(opts: TraceabilityOptions): string {
   const keyList = opts.keys.map((k) => `\`${k}\``).join(", ");
   const docList = opts.sliceDocRelPaths.map((p) => `\`${p}\``).join(", ");
   // Sanctioned adaptation: the parking-lot segment is only included when a
@@ -112,11 +109,25 @@ export function buildSpecMarkdown(opts: BuildSpecOptions): string {
       : "../../parking-lot.md";
     parkingLotSegment = ` · parking-lot: [parking-lot.md](${linkTarget})`;
   }
-  lines.push(
+  return (
     `**Traceability**: slice key(s) ${keyList} · pattern \`${opts.pattern}\` · model \`${opts.modelName}\`${parkingLotSegment} · ` +
-      `slice doc(s): ${docList}`,
-    ""
+    `slice doc(s): ${docList}`
   );
+}
+
+export function buildSpecMarkdown(opts: BuildSpecOptions): string {
+  const { primaryDoc, secondaryDoc } = opts;
+  const isBundle = !!secondaryDoc;
+
+  const lines: string[] = [];
+
+  // --- Header --------------------------------------------------------
+  lines.push(`# Feature Specification: ${primaryDoc.name}`, "");
+  lines.push(`**Feature Branch**: \`${opts.branchName}\``, "");
+  lines.push(`**Created**: ${opts.date}`, "");
+  lines.push(`**Status**: Draft`, "");
+
+  lines.push(buildTraceabilityLine(opts), "");
   lines.push(`**Input**: User description: "${primaryDoc.intent}"`, "");
 
   // --- User Scenarios & Testing ---------------------------------------
