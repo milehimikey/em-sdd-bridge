@@ -49,6 +49,19 @@ npx em-sdd-bridge <slice-key> [<slice-key>] [--dry-run]
 npx em-sdd-mark-implemented <slice-key> <pr-url>
 ```
 
+**Caveat (0.3.0): `em-sdd-mark-implemented` still edits the legacy body-label
+bullets** (`- **Status:**` / `- **Implemented in:**`), not the canonical YAML
+frontmatter this same release makes the sole source of truth for
+`em-sdd-bridge` and `em` itself. Against a frontmatter-only doc (the shape
+every doc should now be authored in) it fails loudly and refuses -- no
+`- **Status:**` bullet to find. Against a doc that still carries both
+dialects, it "succeeds" but only flips the now-inert body bullet: the real,
+frontmatter-derived status is untouched, a silent no-op from `em`'s and the
+bridge's perspective. Whether `mark-implemented` should instead flip the
+frontmatter (or move into `em` itself, alongside `--slice-ready`) is an open
+boundary decision (MIL-101) -- resolve that before relying on this command
+against a frontmatter-only doc.
+
 ### `--symlink`: redirection mode (no rendered spec.md at all)
 
 ```sh
@@ -71,9 +84,12 @@ command prints it on success -- paste it into the PR description.
 
 Caveats:
 
-- **Two-doc bundles can't be linked** -- a symlink points at one file. A
-  pattern-pair that shares a single doc still works (pass `--doc`); a
-  two-doc pair needs the default emission mode.
+- **Two-doc bundles can't be linked, at all** -- a symlink points at one
+  file, but a pattern-pair always resolves to two slice docs now (see
+  "Readiness" below: `em validate --slice-ready` gates per key against each
+  key's own `slices/<key>.md`, so a bundle whose two keys share a single
+  doc via `--doc` can no longer pass readiness for the secondary key
+  regardless of mode). Use the default emission mode for bundles.
 - **POSIX only.** Symlink creation on Windows requires elevated privileges;
   use emission there.
 - Downstream spec-kit prompts written against spec-template section names

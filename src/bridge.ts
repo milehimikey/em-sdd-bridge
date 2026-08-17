@@ -112,25 +112,32 @@ export function runBridge(argv: string[]): BridgeResult {
   const { primary, secondary } = validateSliceKeys(exportModel, keys);
   const isBundle = !!secondary;
 
-  // --doc: explicit slice-doc path (relative to the model dir), shared by ALL keys.
-  // Needed when the export lost the note binding (see locate-slice-doc.ts), and for
-  // pattern-pair bundles, which share ONE doc (see your project's mapping contract).
-  // NOTE: --doc affects only which file THIS bridge reads/links for rendering --
-  // it has no effect on the readiness gate below, which is fully delegated to
-  // `em validate --slice-ready` and always evaluates the model's own
-  // note-bound doc for each key, independent of --doc.
+  // --doc: explicit slice-doc path (relative to the model dir), applied to
+  // whichever key(s) don't otherwise resolve a note binding. Needed when the
+  // export lost the note binding (see locate-slice-doc.ts).
+  // NOTE: --doc affects only which file THIS bridge reads/links for
+  // rendering -- it has no effect on the readiness gate below, which is
+  // fully delegated to `em validate --slice-ready` and always evaluates the
+  // model's own note-bound doc (the literal `slices/<key>.md` convention
+  // path) for each key, independent of --doc. This means a bundle whose two
+  // keys "share one doc" is no longer a supported shape: em's readiness
+  // check has no concept of a shared doc, so the SECONDARY key's own
+  // `slices/<secondary-key>.md` must independently exist and be ready
+  // regardless of what --doc points the render at. If your pair genuinely
+  // has only one written doc, bind BOTH keys' notes to it in the .em model,
+  // or accept that only the primary key's rendering source is overridable.
   const docOverride = flags["doc"];
 
   const symlinkMode = booleans.has("symlink");
-  if (symlinkMode && isBundle && !docOverride) {
+  if (symlinkMode && isBundle) {
     // A symlink points at exactly one file; a two-doc pattern-pair has no
-    // single source to link. A pair that genuinely shares ONE doc stays
-    // linkable via --doc; a two-doc pair uses emission (which interleaves
-    // both docs into one rendering).
+    // single source to link, and (see the --doc note above) there is no
+    // longer a supported "shared doc" bundle shape to link instead -- use
+    // emission (which interleaves both docs into one rendering).
     throw new BridgeError(
       "--symlink cannot represent a two-doc bundle: a symlink points at one file, but this " +
-        "pattern-pair resolves to two slice docs. Either pass --doc <shared-doc> (when the pair " +
-        "shares a single doc) or drop --symlink and let the bridge render the bundled spec.md."
+        "pattern-pair resolves to two slice docs. Drop --symlink and let the bridge render the " +
+        "bundled spec.md instead."
     );
   }
 
@@ -162,8 +169,10 @@ export function runBridge(argv: string[]): BridgeResult {
   let secondaryLocated;
   if (secondary) {
     if (docOverride) {
-      // Pattern-pair sharing one doc: the pair IS one slice doc (see your
-      // project's mapping contract).
+      // Renders the secondary from the SAME overridden doc as the primary.
+      // Purely a rendering-source choice -- readiness above was already
+      // gated independently per key against each key's own convention-path
+      // doc, regardless of this override (see the --doc note above).
       secondaryLocated = primaryLocated;
       secondaryDoc = primaryDoc;
     } else {
