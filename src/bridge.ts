@@ -120,12 +120,14 @@ export function runBridge(argv: string[]): BridgeResult {
   // fully delegated to `em validate --slice-ready` and always evaluates the
   // model's own note-bound doc (the literal `slices/<key>.md` convention
   // path) for each key, independent of --doc. This means a bundle whose two
-  // keys "share one doc" is no longer a supported shape: em's readiness
-  // check has no concept of a shared doc, so the SECONDARY key's own
-  // `slices/<secondary-key>.md` must independently exist and be ready
-  // regardless of what --doc points the render at. If your pair genuinely
-  // has only one written doc, bind BOTH keys' notes to it in the .em model,
-  // or accept that only the primary key's rendering source is overridable.
+  // keys "share one doc" is no longer a supported shape via a shared note:
+  // em's readiness check demands the literal per-key convention path exist
+  // (`note "slices/<secondary-key>.md"` on an element AND a file there) --
+  // binding both keys' notes to the SAME path does not satisfy the
+  // secondary key's own check (verified against em 1.7.0). If your pair
+  // genuinely has only one written doc, place it at each key's own
+  // `slices/<key>.md` (a relative filesystem symlink works -- verified) or
+  // accept that only the primary key's rendering source is overridable.
   const docOverride = flags["doc"];
 
   const symlinkMode = booleans.has("symlink");
