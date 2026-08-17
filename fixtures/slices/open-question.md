@@ -1,9 +1,11 @@
+---
+schemaVersion: 1
+pattern: state-change
+swimlane: Integrator → Pings
+status: ready-to-implement
+version: 1
+---
 # Slice: Open Question Example
-
-- **Pattern:** State Change
-- **Swimlane:** Integrator → Pings
-- **Status:** ready-to-implement
-- **Implemented in:**
 
 ## Intent
 Fixture for the "unchecked Open Question" refusal path -- Status is ready-to-implement but an Open Question is still unchecked.

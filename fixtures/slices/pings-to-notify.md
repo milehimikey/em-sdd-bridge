@@ -1,9 +1,11 @@
+---
+schemaVersion: 1
+pattern: automation
+swimlane: (system) → Pings
+status: ready-to-implement
+version: 1
+---
 # Slice: Pings To Notify
-
-- **Pattern:** Automation
-- **Swimlane:** (system) → Pings
-- **Status:** ready-to-implement
-- **Implemented in:**
 
 ## Intent
 Automatically notify a channel whenever a ping is recorded, as the walking skeleton's automation example (reaction half of the Automation pair with Send Notification).

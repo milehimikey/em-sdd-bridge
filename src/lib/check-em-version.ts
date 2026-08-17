@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 import { BridgeError } from "./bridge-error.js";
 
 /** `em` version this bridge was last verified against. */
-export const MINIMUM_EM_VERSION = "1.1.1";
+export const MINIMUM_EM_VERSION = "1.7.0";
 
 export interface Semver {
   major: number;

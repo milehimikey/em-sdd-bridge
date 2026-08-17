@@ -31,7 +31,7 @@ slice "Send Notification" {
     pingId: UUID,
     channel: string
   }
-  event Notification Sent @Notifications {
+  event Notification Sent @Notifications public {
     pingId: UUID,
     channel: string
   }

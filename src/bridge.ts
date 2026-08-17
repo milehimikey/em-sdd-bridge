@@ -8,12 +8,14 @@
  *     [--symlink] [--dry-run] [--skip-design-gate]
  *
  * See lib/*.ts for the pipeline: minimum-em-version check -> em export ->
- * locate + parse slice doc(s) -> validate readiness + (for 2 keys) the
- * pattern-pair -> the design-completeness / events-first preconditions ->
- * allocate the spec-kit feature (git branch, created + checked out, via the
- * installed git extension when present; spec dir, under the SAME number,
- * via the installed create-new-feature.sh -- see lib/allocate-feature.ts) ->
- * materialize spec.md.
+ * validate the pattern-pair (for 2 keys, from export's slice.pattern) ->
+ * the design-completeness / events-first preconditions -> per-key readiness
+ * gate (delegated to `em validate --slice-ready`, lib/slice-readiness.ts) ->
+ * locate + parse slice doc(s)' body content -> allocate the spec-kit feature
+ * (git branch, created + checked out, via the installed git extension when
+ * present; spec dir, under the SAME number, via the installed
+ * create-new-feature.sh -- see lib/allocate-feature.ts) -> materialize
+ * spec.md.
  *
  * Materialization has two modes (the "who bends" adapter decision):
  *
@@ -55,7 +57,8 @@ import { findRepoRoot } from "./lib/repo.js";
 import { resolveModelPath, runEmExport } from "./lib/em-runner.js";
 import { validateSliceKeys } from "./lib/pattern-validate.js";
 import { locateSliceDoc } from "./lib/locate-slice-doc.js";
-import { parseSliceDoc, assertReadyToImplement } from "./lib/slice-doc.js";
+import { parseSliceDoc } from "./lib/slice-doc.js";
+import { assertSliceReady } from "./lib/slice-readiness.js";
 import { allocateFeature } from "./lib/allocate-feature.js";
 import { buildSpecMarkdown, buildTraceabilityLine } from "./lib/spec-builder.js";
 import { assertPreconditions } from "./lib/preconditions.js";
@@ -109,23 +112,44 @@ export function runBridge(argv: string[]): BridgeResult {
   const { primary, secondary } = validateSliceKeys(exportModel, keys);
   const isBundle = !!secondary;
 
-  // --doc: explicit slice-doc path (relative to the model dir), shared by ALL keys.
-  // Needed when the export lost the note binding (see locate-slice-doc.ts), and for
-  // pattern-pair bundles, which share ONE doc (see your project's mapping contract).
+  // --doc: explicit slice-doc path (relative to the model dir), applied to
+  // whichever key(s) don't otherwise resolve a note binding. Needed when the
+  // export lost the note binding (see locate-slice-doc.ts).
+  // NOTE: --doc affects only which file THIS bridge reads/links for
+  // rendering -- it has no effect on the readiness gate below, which is
+  // fully delegated to `em validate --slice-ready` and always evaluates the
+  // model's own note-bound doc (the literal `slices/<key>.md` convention
+  // path) for each key, independent of --doc. This means a bundle whose two
+  // keys "share one doc" is no longer a supported shape via a shared note:
+  // em's readiness check demands the literal per-key convention path exist
+  // (`note "slices/<secondary-key>.md"` on an element AND a file there) --
+  // binding both keys' notes to the SAME path does not satisfy the
+  // secondary key's own check (verified against em 1.7.0). If your pair
+  // genuinely has only one written doc, place it at each key's own
+  // `slices/<key>.md` (a relative filesystem symlink works -- verified) or
+  // accept that only the primary key's rendering source is overridable.
   const docOverride = flags["doc"];
 
   const symlinkMode = booleans.has("symlink");
-  if (symlinkMode && isBundle && !docOverride) {
+  if (symlinkMode && isBundle) {
     // A symlink points at exactly one file; a two-doc pattern-pair has no
-    // single source to link. A pair that genuinely shares ONE doc stays
-    // linkable via --doc; a two-doc pair uses emission (which interleaves
-    // both docs into one rendering).
+    // single source to link, and (see the --doc note above) there is no
+    // longer a supported "shared doc" bundle shape to link instead -- use
+    // emission (which interleaves both docs into one rendering).
     throw new BridgeError(
       "--symlink cannot represent a two-doc bundle: a symlink points at one file, but this " +
-        "pattern-pair resolves to two slice docs. Either pass --doc <shared-doc> (when the pair " +
-        "shares a single doc) or drop --symlink and let the bridge render the bundled spec.md."
+        "pattern-pair resolves to two slice docs. Drop --symlink and let the bridge render the " +
+        "bundled spec.md instead."
     );
   }
+
+  // Readiness gate, per key, fully delegated to `em validate --slice-ready`
+  // (lib/slice-readiness.ts) -- runs before the design-completeness gate
+  // since it's a single cheap subprocess call, independent of file
+  // location, and fails fast on the most common "not actually ready yet"
+  // case before the more expensive checks below run.
+  assertSliceReady(modelPath, primary.key);
+  if (secondary) assertSliceReady(modelPath, secondary.key);
 
   // Design-completeness + events-first preconditions, run BEFORE feature
   // allocation and fail-closed. See lib/preconditions.ts.
@@ -141,29 +165,31 @@ export function runBridge(argv: string[]): BridgeResult {
   }
 
   const primaryLocated = locateSliceDoc(exportModel, modelPath, primary.key, docOverride);
-  const primaryDoc = parseSliceDoc(readFileSync(primaryLocated.absolutePath, "utf8"), primaryLocated.relativePath);
-  assertReadyToImplement(primaryDoc, primaryLocated.relativePath);
+  const primaryDoc = parseSliceDoc(readFileSync(primaryLocated.absolutePath, "utf8"), primary.pattern, primaryLocated.relativePath);
 
   let secondaryDoc;
   let secondaryLocated;
   if (secondary) {
     if (docOverride) {
-      // Pattern-pair sharing one doc: the pair IS one slice doc (see your
-      // project's mapping contract).
+      // Renders the secondary from the SAME overridden doc as the primary.
+      // Purely a rendering-source choice -- readiness above was already
+      // gated independently per key against each key's own convention-path
+      // doc, regardless of this override (see the --doc note above).
       secondaryLocated = primaryLocated;
       secondaryDoc = primaryDoc;
     } else {
       secondaryLocated = locateSliceDoc(exportModel, modelPath, secondary.key);
-      secondaryDoc = parseSliceDoc(readFileSync(secondaryLocated.absolutePath, "utf8"), secondaryLocated.relativePath);
-      assertReadyToImplement(secondaryDoc, secondaryLocated.relativePath);
-    }
-
-    if (!/automation|translation/i.test(primaryDoc.pattern)) {
-      throw new BridgeError(
-        `Bundling requires the primary (first) slice key to be the Automation/Translation reactor. ` +
-          `"${primary.key}" declares Pattern: "${primaryDoc.pattern}".`
+      secondaryDoc = parseSliceDoc(
+        readFileSync(secondaryLocated.absolutePath, "utf8"),
+        secondary.pattern,
+        secondaryLocated.relativePath
       );
     }
+    // No separate bundling re-check here: validateSliceKeys (pattern-validate.ts)
+    // already guarantees, by construction, that `primary` is the reactor
+    // (Automation/Translation) whenever `secondary` is set -- re-deriving the
+    // same invariant from primaryDoc.pattern would only risk two checks
+    // drifting apart.
   }
 
   const shortName = primary.key;

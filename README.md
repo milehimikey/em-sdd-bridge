@@ -49,6 +49,19 @@ npx em-sdd-bridge <slice-key> [<slice-key>] [--dry-run]
 npx em-sdd-mark-implemented <slice-key> <pr-url>
 ```
 
+**Caveat (0.3.0): `em-sdd-mark-implemented` still edits the legacy body-label
+bullets** (`- **Status:**` / `- **Implemented in:**`), not the canonical YAML
+frontmatter this same release makes the sole source of truth for
+`em-sdd-bridge` and `em` itself. Against a frontmatter-only doc (the shape
+every doc should now be authored in) it fails loudly and refuses -- no
+`- **Status:**` bullet to find. Against a doc that still carries both
+dialects, it "succeeds" but only flips the now-inert body bullet: the real,
+frontmatter-derived status is untouched, a silent no-op from `em`'s and the
+bridge's perspective. Whether `mark-implemented` should instead flip the
+frontmatter (or move into `em` itself, alongside `--slice-ready`) is an open
+boundary decision (MIL-101) -- resolve that before relying on this command
+against a frontmatter-only doc.
+
 ### `--symlink`: redirection mode (no rendered spec.md at all)
 
 ```sh
@@ -71,9 +84,12 @@ command prints it on success -- paste it into the PR description.
 
 Caveats:
 
-- **Two-doc bundles can't be linked** -- a symlink points at one file. A
-  pattern-pair that shares a single doc still works (pass `--doc`); a
-  two-doc pair needs the default emission mode.
+- **Two-doc bundles can't be linked, at all** -- a symlink points at one
+  file, but a pattern-pair always resolves to two slice docs now (see
+  "Readiness" below: `em validate --slice-ready` gates per key against each
+  key's own `slices/<key>.md`, so a bundle whose two keys share a single
+  doc via `--doc` can no longer pass readiness for the secondary key
+  regardless of mode). Use the default emission mode for bundles.
 - **POSIX only.** Symlink creation on Windows requires elevated privileges;
   use emission there.
 - Downstream spec-kit prompts written against spec-template section names
@@ -195,15 +211,38 @@ which convention a repo follows is repo policy decided in review, not a
 per-invocation choice an autonomous agent could quietly vary. Malformed JSON
 or an unknown value is a gate **failure**, never a silent fallback.
 
-### Slice-doc dialects: body labels and YAML frontmatter
+### Slice-doc metadata: sourced from `em export`, not parsed here
 
-The slice-doc parser reads the template's body-label style
-(`- **Status:** ready-to-implement`, `- **Pattern:** State Change`) first,
-and falls back to top-level YAML frontmatter scalars (`status:
-ready-to-implement`, `pattern: state-change`) for docs authored in the
-frontmatter dialect. When both are present the body label wins. This matters
-mostly for the readiness gate: a frontmatter-only doc previously read as
-`Status "(missing)"`; it now gates on its real status.
+As of `em-sdd-bridge` 0.3.0 (requiring `em` >=1.7.0, the release carrying
+both the joined export, MIL-91, and the native readiness gate, MIL-87),
+this package no longer parses slice-doc frontmatter at all. `pattern`,
+`status`, `version`, `implementedIn`, and lineage (`splitFrom`/`mergedFrom`/
+`supersededBy`) come straight from `em export`'s `slice.pattern`/`slice.doc`
+fields -- structured, canonical frontmatter, joined server-side by `em`
+itself. This retires the bridge's former dual-dialect (body-label vs. YAML
+frontmatter) parser and the interop failure class it existed to paper over
+(a frontmatter-only doc reading as `Status "(missing)"`).
+
+`em export`'s doc join only recognizes a `note` that is EXACTLY the slug
+convention `slices/<key>.md`; a custom note path (or no note at all) reads
+as "no doc bound," with no bridge-side fallback. `em-sdd-bridge`'s own
+`--doc` override still works for *locating* which file to render/link, but
+has no effect on `em export`'s or `em validate --slice-ready`'s idea of
+which doc is bound to a slice.
+
+`em-sdd-bridge` still parses the slice doc's markdown **body** directly --
+Intent, Command/Event/Read-Model tables, Invariants, Scenarios, Alternate &
+Error Flows, Non-Functional Requirements, Open Questions -- since none of
+that is in `em export` by design (frontmatter only, never the body).
+
+### Readiness: delegated to `em validate --slice-ready`
+
+The bridge no longer implements its own "ready to implement" predicate.
+Before allocating a feature, it shells out to `em validate <model>
+--slice-ready <key>` for each slice key and gates purely on the exit code
+(0 = ready). `em`'s own diagnostic text is relayed verbatim into the
+refusal -- never parsed or pattern-matched -- since em owns that format and
+can change it freely. One gate implementation (em's), not two.
 
 ### `infrastructure-context.md`: a configurable narrowing hint
 
@@ -276,8 +315,15 @@ npm pack
 mkdir /tmp/em-sdd-bridge-smoketest && cd /tmp/em-sdd-bridge-smoketest
 npm init -y && npm install --no-save /path/to/em-sdd-bridge-<version>.tgz
 # copy a minimal .specify/ + model.em + slice doc in, then:
+
+# Default (emission) mode:
 node_modules/.bin/em-sdd-bridge <slice-key> --dry-run --skip-design-gate
 # must print the rendered spec.md, not exit silently.
+
+# --symlink (redirection) mode -- exercise separately; it takes an entirely
+# different code path (no rendering, a relative symlink instead):
+node_modules/.bin/em-sdd-bridge <slice-key> --symlink --dry-run --skip-design-gate
+# must print the would-be symlink target and the Traceability line, not exit silently.
 ```
 
 `src/test/check-em-version.test.ts` covers the minimum-`em`-version check:
