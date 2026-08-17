@@ -1,9 +1,11 @@
+---
+schemaVersion: 1
+pattern: state-change
+swimlane: (system) → Notifications
+status: ready-to-implement
+version: 1
+---
 # Slice: Send Notification
-
-- **Pattern:** State Change
-- **Swimlane:** (system) → Notifications
-- **Status:** ready-to-implement
-- **Implemented in:**
 
 ## Intent
 Record that a notification was sent for a given ping — the command half of the Pings To Notify / Send Notification Automation pair.
