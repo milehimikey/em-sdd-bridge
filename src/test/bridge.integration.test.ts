@@ -69,7 +69,7 @@ describe.skipIf(!hasEm())("runBridge (dry-run, real em + real create-new-feature
 
     expect(result.branchName).toMatch(/^\d{3}-pings-to-notify$/);
     expect(result.content).toContain(
-      "**Traceability**: slice key(s) `pings-to-notify`, `send-notification` · pattern `Automation`"
+      "**Traceability**: slice key(s) `pings-to-notify`, `send-notification` · pattern `automation`"
     );
   });
 

@@ -7,7 +7,14 @@
  */
 
 import { BridgeError } from "./bridge-error.js";
-import { classifySlice, findSliceByKey, type ExportedModel, type ExportedSlice } from "./export-model.js";
+import { findSliceByKey, type ExportedModel, type ExportedSlice, type SlicePattern } from "./export-model.js";
+
+/** Reactor patterns for the bundling rule -- the reaction/translation slice
+ *  that triggers the state-change slice immediately after it. Sourced from
+ *  `em export`'s model-derived `slice.pattern` (export-model.ts), which
+ *  distinguishes Automation from Translation -- the bridge's former
+ *  element-kind-only classifier (retired) could not. */
+const REACTOR_PATTERNS: ReadonlySet<SlicePattern> = new Set(["automation", "translation"]);
 
 export interface ValidatedKeys {
   /** The primary slice -- the reactor/translator for a bundle, or the sole slice otherwise. */
@@ -41,19 +48,19 @@ export function validateSliceKeys(model: ExportedModel, keys: string[]): Validat
     );
   }
 
-  // Exactly 2 keys: must be a reaction slice immediately followed by the
-  // state-change slice it triggers (em-dsl.md: "wires to the command in the
-  // immediately next slice").
+  // Exactly 2 keys: must be a reactor slice (Automation or Translation)
+  // immediately followed by the state-change slice it triggers (em-dsl.md:
+  // "wires to the command in the immediately next slice"). Pattern comes
+  // straight from `em export`'s model-derived slice.pattern -- never from
+  // the slice docs' say-so alone.
   const [a, b] = slices;
-  const roleA = classifySlice(a);
-  const roleB = classifySlice(b);
 
   let reaction: ExportedSlice | undefined;
   let stateChange: ExportedSlice | undefined;
-  if (roleA === "reaction" && roleB === "state-change") {
+  if (REACTOR_PATTERNS.has(a.pattern) && b.pattern === "state-change") {
     reaction = a;
     stateChange = b;
-  } else if (roleB === "reaction" && roleA === "state-change") {
+  } else if (REACTOR_PATTERNS.has(b.pattern) && a.pattern === "state-change") {
     reaction = b;
     stateChange = a;
   }
@@ -62,9 +69,9 @@ export function validateSliceKeys(model: ExportedModel, keys: string[]): Validat
     throw new BridgeError(
       `Refusing to bundle "${keys.join(
         ", "
-      )}": not a pattern-mandated Automation/Translation pair. Expected one reaction slice ` +
-        `(processor/translation, no command/event) and one state-change slice (command + event); ` +
-        `got roles [${roleA}, ${roleB}].`
+      )}": not a pattern-mandated Automation/Translation pair. Expected one reactor slice ` +
+        `(pattern "automation" or "translation") and one state-change slice (pattern "state-change"); ` +
+        `got patterns [${a.pattern}, ${b.pattern}].`
     );
   }
 

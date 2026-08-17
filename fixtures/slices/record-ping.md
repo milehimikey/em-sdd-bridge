@@ -1,7 +1,17 @@
+---
+schemaVersion: 1
+pattern: state-change
+swimlane: Integrator → Pings
+status: ready-to-implement
+version: 1
+---
 # Slice: Record Ping
 
-- **Pattern:** State Change
-- **Swimlane:** Integrator → Pings
+<!-- Legacy body-label bullets, kept solely for mark-implemented-doc.ts's
+     STATUS_RE/IMPLEMENTED_IN_RE (out of scope for MIL-94, still regex-edits
+     these lines directly). em/the bridge itself now reads status/pattern
+     from the frontmatter above, not from these -- editing them here does
+     NOT flip the doc's real status; only frontmatter does. -->
 - **Status:** ready-to-implement
 - **Implemented in:**
 

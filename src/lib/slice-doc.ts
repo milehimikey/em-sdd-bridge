@@ -1,13 +1,22 @@
 /**
- * Parser for the event-modeling slice doc template
+ * Parser for the event-modeling slice doc template's BODY content
  * (`.claude/skills/event-modeling/templates/slice.md`). Deliberately tolerant of
  * incidental whitespace but strict about the section headings the template
  * defines -- those are the mapping contract's "Source (slice.md)" column.
+ *
+ * As of MIL-94 (em >=1.7.0's joined export), this module parses ONLY what
+ * `em export` deliberately excludes: the markdown body sections rendered
+ * into spec.md (Intent, field tables, invariants, scenarios, ...). It no
+ * longer parses frontmatter at all -- pattern/status/implementedIn/lineage
+ * now come from `em export`'s `slice.pattern`/`slice.doc` fields
+ * (export-model.ts), and readiness is fully delegated to `em validate
+ * --slice-ready` (slice-readiness.ts). `pattern` is a required parameter of
+ * parseSliceDoc below (supplied by the caller from the ExportedSlice it
+ * already has), not something this parser derives.
  */
 
 import { BridgeError } from "./bridge-error.js";
-
-export type SliceStatus = "draft" | "reviewed" | "ready-to-implement" | "implemented";
+import type { SlicePattern } from "./export-model.js";
 
 export interface FieldRow {
   field: string;
@@ -37,10 +46,9 @@ export interface OpenQuestion {
 
 export interface ParsedSliceDoc {
   name: string;
-  pattern: string;
-  swimlane: string;
-  status: string;
-  implementedIn: string;
+  /** Supplied by the caller (from the ExportedSlice it already has), not
+   *  parsed here -- see the module doc comment above. */
+  pattern: SlicePattern;
   intent: string;
   triggerActor: string;
   command: { name: string; fields: FieldRow[] } | null;
@@ -75,34 +83,6 @@ function bulletValue(text: string, label: string): string {
     if (m) return m[1].trim();
   }
   return "";
-}
-
-/**
- * Top-level scalar keys from a leading YAML frontmatter block (`---` ...
- * `---`), if the doc has one. Fallback source for docs authored in the
- * frontmatter style (e.g. `status: ready-to-implement` / `pattern:
- * state-view` in YAML) rather than the body-label style this parser was
- * originally built against -- both slice-doc dialects exist in real repos,
- * and the bridge's readiness gate reading "(missing)" off a frontmatter-style
- * doc was a live interop failure. Deliberately minimal: scalars only (list
- * items and indented continuation lines are skipped); the body-label value
- * always wins when both are present, since the body is the
- * template-contract surface.
- */
-function parseYamlFrontmatter(markdown: string): Map<string, string> {
-  const values = new Map<string, string>();
-  if (!markdown.startsWith("---\n") && !markdown.startsWith("---\r\n")) return values;
-  const lines = markdown.split("\n");
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^---\s*$/.test(line)) break; // closing fence
-    if (/^\s/.test(line) || line.trimStart().startsWith("-")) continue; // nested/list content
-    const m = line.match(/^([A-Za-z][\w-]*):\s*(.*)$/);
-    if (!m) continue;
-    const value = m[2].trim().replace(/^["']|["']$/g, "");
-    if (value) values.set(m[1].toLowerCase(), value);
-  }
-  return values;
 }
 
 function parseTable(text: string): string[][] {
@@ -189,23 +169,12 @@ function parseBulletList(text: string): string[] {
     .filter(Boolean);
 }
 
-export function parseSliceDoc(markdown: string, sourceLabel = "<slice doc>"): ParsedSliceDoc {
+export function parseSliceDoc(markdown: string, pattern: SlicePattern, sourceLabel = "<slice doc>"): ParsedSliceDoc {
   const titleMatch = markdown.match(/^#\s*Slice:\s*(.+)\s*$/m);
   if (!titleMatch) {
     throw new BridgeError(`${sourceLabel}: missing "# Slice: <Name>" heading`);
   }
   const name = titleMatch[1].trim();
-
-  const frontmatterEnd = markdown.search(/^##\s+/m);
-  const frontmatter = frontmatterEnd === -1 ? markdown : markdown.slice(0, frontmatterEnd);
-  const yaml = parseYamlFrontmatter(markdown);
-
-  // Body-label first (the template contract), YAML frontmatter as fallback
-  // for docs authored in the frontmatter dialect.
-  const pattern = bulletValue(frontmatter, "Pattern") || yaml.get("pattern") || "";
-  const swimlane = bulletValue(frontmatter, "Swimlane");
-  const status = bulletValue(frontmatter, "Status") || yaml.get("status") || "";
-  const implementedIn = bulletValue(frontmatter, "Implemented in") || yaml.get("implementedin") || "";
 
   const sections = splitSections(markdown);
 
@@ -272,9 +241,6 @@ export function parseSliceDoc(markdown: string, sourceLabel = "<slice doc>"): Pa
   return {
     name,
     pattern,
-    swimlane,
-    status,
-    implementedIn,
     intent,
     triggerActor,
     command,
@@ -286,21 +252,4 @@ export function parseSliceDoc(markdown: string, sourceLabel = "<slice doc>"): Pa
     nonFunctional,
     openQuestions,
   };
-}
-
-/** Precondition gate (mapping doc "Preconditions" + TASK A brief): refuse unless
- *  ready-to-implement and every Open Question is checked off. */
-export function assertReadyToImplement(doc: ParsedSliceDoc, sourceLabel: string): void {
-  if (doc.status !== "ready-to-implement") {
-    throw new BridgeError(
-      `${sourceLabel}: Status is "${doc.status || "(missing)"}", not "ready-to-implement" -- refusing.`
-    );
-  }
-  const unchecked = doc.openQuestions.filter((q) => !q.checked);
-  if (unchecked.length > 0) {
-    throw new BridgeError(
-      `${sourceLabel}: ${unchecked.length} unchecked Open Question(s) remain -- refusing:\n` +
-        unchecked.map((q) => `  - [ ] ${q.text}`).join("\n")
-    );
-  }
 }

@@ -6,12 +6,19 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { ParsedSliceDoc } from "./slice-doc.js";
+import type { SlicePattern } from "./export-model.js";
 
 export interface BuildSpecOptions {
   branchName: string;
   date: string; // YYYY-MM-DD
   keys: string[]; // primary key first, secondary (if any) second
-  pattern: string;
+  /** The PRIMARY slice's pattern (em export's model-derived slice.pattern),
+   *  for the rendered Traceability line. Each doc's OWN pattern (used by
+   *  emitReadModelFr/emitOutcomeScs below) lives on that doc directly --
+   *  primaryDoc.pattern / secondaryDoc.pattern -- since a bundle's two
+   *  slices carry different patterns (reactor vs. the state-change it
+   *  triggers). */
+  pattern: SlicePattern;
   primaryDoc: ParsedSliceDoc;
   secondaryDoc?: ParsedSliceDoc;
   sliceDocRelPaths: string[]; // matches `keys` order
@@ -198,7 +205,7 @@ export function buildSpecMarkdown(opts: BuildSpecOptions): string {
 
   const emitReadModelFr = (doc: ParsedSliceDoc) => {
     if (!doc.readModel) return;
-    if (!/state view/i.test(doc.pattern)) return;
+    if (doc.pattern !== "state-view") return;
     const events = doc.readModel.builtFromEvents || "the upstream event(s)";
     const freshness = doc.readModel.freshness || "eventual";
     frLines.push(
@@ -263,7 +270,7 @@ export function buildSpecMarkdown(opts: BuildSpecOptions): string {
     if (doc.nonFunctional.performance && !/^(none|n\/a)$/i.test(doc.nonFunctional.performance.trim())) {
       scLines.push(`- **SC-${sc.next()}**: ${doc.nonFunctional.performance}`);
     }
-    if (/state view/i.test(doc.pattern) && doc.readModel?.freshness) {
+    if (doc.pattern === "state-view" && doc.readModel?.freshness) {
       const events = doc.readModel.builtFromEvents || "the upstream event(s)";
       scLines.push(`- **SC-${sc.next()}**: Reads reflect ${events} within ${doc.readModel.freshness} consistency.`);
     }

@@ -176,21 +176,16 @@ describe.skipIf(!hasEm())("--symlink mode (redirection: spec.md is a link to the
   it("still enforces the readiness gate: a non-ready slice does not get linked", () => {
     const { repo, modelPath } = buildScratchRepoWithModel();
 
-    // --doc points a valid key at the not-ready fixture doc, so the failure
-    // exercised is assertReadyToImplement -- not key resolution.
+    // Readiness is now fully delegated to `em validate --slice-ready`, which
+    // always evaluates the MODEL's own note-bound doc for the key -- --doc no
+    // longer has any influence on it (see bridge.ts's docOverride comment).
+    // So exercising the refusal path means making the actual convention-bound
+    // doc (slices/record-ping.md) not ready, not pointing --doc elsewhere.
+    copyFileSync(path.join(fixturesDir, "slices", "not-ready.md"), path.join(repo, "slices", "record-ping.md"));
+
     expect(() =>
-      runBridge([
-        "record-ping",
-        "--doc",
-        "slices/not-ready.md",
-        "--repo-root",
-        repo,
-        "--model",
-        modelPath,
-        "--symlink",
-        "--skip-design-gate",
-      ])
-    ).toThrow(/not "ready-to-implement"/);
+      runBridge(["record-ping", "--repo-root", repo, "--model", modelPath, "--symlink", "--skip-design-gate"])
+    ).toThrow(/not ready to implement/);
     // And nothing was allocated for it (the gate runs before allocation).
     expect(existsSync(path.join(repo, "specs"))).toBe(false);
   });
