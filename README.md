@@ -57,10 +57,18 @@ every doc should now be authored in) it fails loudly and refuses -- no
 `- **Status:**` bullet to find. Against a doc that still carries both
 dialects, it "succeeds" but only flips the now-inert body bullet: the real,
 frontmatter-derived status is untouched, a silent no-op from `em`'s and the
-bridge's perspective. Whether `mark-implemented` should instead flip the
-frontmatter (or move into `em` itself, alongside `--slice-ready`) is an open
-boundary decision (MIL-101) -- resolve that before relying on this command
-against a frontmatter-only doc.
+bridge's perspective.
+
+**Resolved (MIL-101): native, bridge becomes a thin wrapper.** `em` will ship
+`em slice mark-implemented <key> <pr-url>` as a frontmatter writer -- same
+promotion precedent as `--slice-ready` (MIL-87), and the write-side mirror of
+retiring the bridge's own frontmatter *reading* in this same release (MIL-94).
+`em-sdd-mark-implemented` will migrate to shell out to that command instead of
+regex-editing body bullets. Until that migration lands (tracked as
+[MIL-103](https://linear.app/milehimikey/issue/MIL-103/em-native-em-slice-mark-implemented-key-pr-url-frontmatter)
+-> [MIL-104](https://linear.app/milehimikey/issue/MIL-104/em-sdd-bridge-migrate-em-sdd-mark-implemented-to-a-thin-wrapper-over)),
+the caveat above still applies -- don't rely on this command against a
+frontmatter-only doc.
 
 ### `--symlink`: redirection mode (no rendered spec.md at all)
 
