@@ -1,9 +1,11 @@
+---
+schemaVersion: 1
+pattern: state-view
+swimlane: Integrator → Pings
+status: ready-to-implement
+version: 1
+---
 # Slice: Recent Pings
-
-- **Pattern:** State View
-- **Swimlane:** Integrator → Pings
-- **Status:** ready-to-implement
-- **Implemented in:**
 
 ## Intent
 Let the Integrator see the most recent pings recorded, so they can confirm the walking skeleton's write path actually took effect.

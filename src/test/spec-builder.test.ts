@@ -5,18 +5,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSpecMarkdown } from "../lib/spec-builder.js";
 import { parseSliceDoc } from "../lib/slice-doc.js";
+import type { SlicePattern } from "../lib/export-model.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturesDir = path.resolve(__dirname, "../../fixtures");
 const slicesDir = path.join(fixturesDir, "slices");
 
-function loadDoc(name: string) {
-  return parseSliceDoc(readFileSync(path.join(slicesDir, name), "utf8"));
+function loadDoc(name: string, pattern: SlicePattern) {
+  return parseSliceDoc(readFileSync(path.join(slicesDir, name), "utf8"), pattern);
 }
 
 describe("buildSpecMarkdown", () => {
   it("renders a single-slice (State Change) spec.md per the mapping contract", () => {
-    const primaryDoc = loadDoc("record-ping.md");
+    const primaryDoc = loadDoc("record-ping.md", "state-change");
     const content = buildSpecMarkdown({
       branchName: "007-record-ping",
       date: "2026-07-27",
@@ -35,7 +36,7 @@ describe("buildSpecMarkdown", () => {
     // fixtures/ has no parking-lot.md -- the segment is omitted (a
     // sanctioned adaptation; see spec-builder.ts's doc comment).
     expect(content).toContain(
-      "**Traceability**: slice key(s) `record-ping` · pattern `State Change` · model `model.em` · " +
+      "**Traceability**: slice key(s) `record-ping` · pattern `state-change` · model `model.em` · " +
         "slice doc(s): `slices/record-ping.md`"
     );
     expect(content).not.toContain("parking-lot");
@@ -55,7 +56,7 @@ describe("buildSpecMarkdown", () => {
   });
 
   it("renders Key Entities for a State View slice from Read Model / View only", () => {
-    const primaryDoc = loadDoc("recent-pings.md");
+    const primaryDoc = loadDoc("recent-pings.md", "state-view");
     const content = buildSpecMarkdown({
       branchName: "008-recent-pings",
       date: "2026-07-27",
@@ -73,8 +74,8 @@ describe("buildSpecMarkdown", () => {
   });
 
   it("renders a bundled Automation pair as one spec with interleaved scenarios and FRs", () => {
-    const primaryDoc = loadDoc("pings-to-notify.md");
-    const secondaryDoc = loadDoc("send-notification.md");
+    const primaryDoc = loadDoc("pings-to-notify.md", "automation");
+    const secondaryDoc = loadDoc("send-notification.md", "state-change");
     const content = buildSpecMarkdown({
       branchName: "009-pings-to-notify",
       date: "2026-07-27",
@@ -89,7 +90,7 @@ describe("buildSpecMarkdown", () => {
 
     expect(content).toContain("# Feature Specification: Pings To Notify");
     expect(content).toContain(
-      "**Traceability**: slice key(s) `pings-to-notify`, `send-notification` · pattern `Automation`"
+      "**Traceability**: slice key(s) `pings-to-notify`, `send-notification` · pattern `automation`"
     );
     expect(content).toContain(
       "**Independent Test**: Tested as a unit with `Send Notification` — not independently testable per the Automation/Translation bundling rule (see the project's constitution)."
@@ -120,7 +121,7 @@ describe("buildSpecMarkdown", () => {
     });
 
     it("omits the segment when parking-lot.md does not exist relative to the model dir", () => {
-      const primaryDoc = loadDoc("record-ping.md");
+      const primaryDoc = loadDoc("record-ping.md", "state-change");
       const content = buildSpecMarkdown({
         branchName: "007-record-ping",
         date: "2026-07-27",
@@ -135,7 +136,7 @@ describe("buildSpecMarkdown", () => {
     });
 
     it("omits the segment when modelDir is not passed at all", () => {
-      const primaryDoc = loadDoc("record-ping.md");
+      const primaryDoc = loadDoc("record-ping.md", "state-change");
       const content = buildSpecMarkdown({
         branchName: "007-record-ping",
         date: "2026-07-27",
@@ -152,7 +153,7 @@ describe("buildSpecMarkdown", () => {
       tmpDir = mkdtempSync(path.join(tmpdir(), "bridge-spec-builder-parking-lot-"));
       writeFileSync(path.join(tmpDir, "parking-lot.md"), "# Parking Lot\n");
 
-      const primaryDoc = loadDoc("record-ping.md");
+      const primaryDoc = loadDoc("record-ping.md", "state-change");
       const content = buildSpecMarkdown({
         branchName: "007-record-ping",
         date: "2026-07-27",
@@ -165,7 +166,7 @@ describe("buildSpecMarkdown", () => {
       });
 
       expect(content).toContain(
-        "**Traceability**: slice key(s) `record-ping` · pattern `State Change` · model `model.em` · " +
+        "**Traceability**: slice key(s) `record-ping` · pattern `state-change` · model `model.em` · " +
           "parking-lot: [parking-lot.md](../../parking-lot.md) · slice doc(s): `slices/record-ping.md`"
       );
     });
@@ -183,7 +184,7 @@ describe("buildSpecMarkdown", () => {
       writeFileSync(path.join(componentDir, "parking-lot.md"), "# Parking Lot\n");
       const specFilePath = path.join(repoRoot, "specs", "007-record-ping", "spec.md");
 
-      const primaryDoc = loadDoc("record-ping.md");
+      const primaryDoc = loadDoc("record-ping.md", "state-change");
       const content = buildSpecMarkdown({
         branchName: "007-record-ping",
         date: "2026-07-27",
