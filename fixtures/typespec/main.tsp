@@ -1,4 +1,4 @@
-// FIN-222 fixture: a minimal, dependency-free TypeSpec model for the "Ping"
+// Fixture: a minimal, dependency-free TypeSpec model for the "Ping"
 // walking-skeleton subject (see ../model.em). Deliberately uses only
 // @typespec/compiler core syntax -- no @typespec/http or other libraries --
 // so `npx tsp compile main.tsp --no-emit` succeeds with just the compiler
