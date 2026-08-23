@@ -23,11 +23,11 @@ slice "Recent Pings" {
 
 slice "Pings To Notify" {
   view Pings To Notify from "Ping Recorded"
-  processor Notify On Ping note "slices/pings-to-notify.md"
 }
 
 slice "Send Notification" {
-  command Send Notification note "slices/send-notification.md" {
+  processor Notify On Ping from "Pings To Notify" note "slices/send-notification.md"
+  command Send Notification {
     pingId: UUID,
     channel: string
   }

@@ -1,6 +1,10 @@
 /**
- * Renders `spec.md` per your project's slice-to-spec mapping contract (see
- * that doc for judgment calls where it under-specifies bundle behavior).
+ * Renders `spec.md` per your project's slice-to-spec mapping contract. One
+ * slice doc in, one spec.md out -- as of the merged Automation/Translation
+ * reaction shape (`em` >=1.7.1, MIL-120) a reaction, the command it
+ * triggers, and the event that command emits all live in ONE slice, so
+ * there is no longer a second, separately-bundled slice doc to interleave
+ * (see lib/pattern-validate.ts).
  */
 
 import { existsSync } from "node:fs";
@@ -11,16 +15,12 @@ import type { SlicePattern } from "./export-model.js";
 export interface BuildSpecOptions {
   branchName: string;
   date: string; // YYYY-MM-DD
-  keys: string[]; // primary key first, secondary (if any) second
-  /** The PRIMARY slice's pattern (em export's model-derived slice.pattern),
-   *  for the rendered Traceability line. Each doc's OWN pattern (used by
-   *  emitReadModelFr/emitOutcomeScs below) lives on that doc directly --
-   *  primaryDoc.pattern / secondaryDoc.pattern -- since a bundle's two
-   *  slices carry different patterns (reactor vs. the state-change it
-   *  triggers). */
+  keys: string[]; // always exactly one slice key (see the module doc comment)
+  /** The slice's pattern (em export's model-derived slice.pattern), for the
+   *  rendered Traceability line -- also `primaryDoc.pattern` (used by
+   *  emitReadModelFr/emitOutcomeScs below). */
   pattern: SlicePattern;
   primaryDoc: ParsedSliceDoc;
-  secondaryDoc?: ParsedSliceDoc;
   sliceDocRelPaths: string[]; // matches `keys` order
   modelName: string; // basename of the resolved .em model file, e.g. "model.em"
   /**
@@ -123,8 +123,7 @@ export function buildTraceabilityLine(opts: TraceabilityOptions): string {
 }
 
 export function buildSpecMarkdown(opts: BuildSpecOptions): string {
-  const { primaryDoc, secondaryDoc } = opts;
-  const isBundle = !!secondaryDoc;
+  const { primaryDoc } = opts;
 
   const lines: string[] = [];
 
@@ -144,36 +143,23 @@ export function buildSpecMarkdown(opts: BuildSpecOptions): string {
   lines.push(journey, "");
   lines.push(`**Why this priority**: ${firstSentence(primaryDoc.intent)}`, "");
 
-  if (isBundle) {
-    lines.push(
-      `**Independent Test**: Tested as a unit with \`${secondaryDoc!.name}\` — not independently ` +
-        `testable per the Automation/Translation bundling rule (see the project's constitution).`,
-      ""
-    );
-  } else {
-    const happy = primaryDoc.scenarios.find((s) => s.kind === "happy");
-    lines.push(
-      `**Independent Test**: Can be fully tested by ${happy ? happy.text : "exercising the slice's happy path"} ` +
-        `and delivers the recorded fact / read-model change described above.`,
-      ""
-    );
-  }
+  const happy = primaryDoc.scenarios.find((s) => s.kind === "happy");
+  lines.push(
+    `**Independent Test**: Can be fully tested by ${happy ? happy.text : "exercising the slice's happy path"} ` +
+      `and delivers the recorded fact / read-model change described above.`,
+    ""
+  );
 
   lines.push(`**Acceptance Scenarios**:`, "");
-  const allScenarios = isBundle
-    ? [...primaryDoc.scenarios, ...secondaryDoc!.scenarios]
-    : primaryDoc.scenarios;
-  allScenarios.forEach((s, i) => {
+  primaryDoc.scenarios.forEach((s, i) => {
     lines.push(`${i + 1}. ${boldGwt(s.text)}`);
   });
   lines.push("", "---", "");
 
   lines.push(`### Edge Cases`, "");
-  const edgeFlows = isBundle
-    ? [...primaryDoc.alternateErrorFlows, ...secondaryDoc!.alternateErrorFlows]
-    : primaryDoc.alternateErrorFlows;
+  const edgeFlows = primaryDoc.alternateErrorFlows;
   if (edgeFlows.length === 0) {
-    lines.push(`- None recorded in the slice doc(s).`);
+    lines.push(`- None recorded in the slice doc.`);
   } else {
     for (const flow of edgeFlows) lines.push(`- ${flow}`);
   }
@@ -225,34 +211,20 @@ export function buildSpecMarkdown(opts: BuildSpecOptions): string {
   emitInvariantFrs(primaryDoc);
   emitReadModelFr(primaryDoc);
   emitClarificationFrs(primaryDoc);
-  if (isBundle) {
-    emitFieldFrs(secondaryDoc!);
-    emitInvariantFrs(secondaryDoc!);
-    emitReadModelFr(secondaryDoc!);
-    emitClarificationFrs(secondaryDoc!);
-  }
 
-  lines.push(...(frLines.length > 0 ? frLines : [`- None derived from the slice doc(s).`]), "");
+  lines.push(...(frLines.length > 0 ? frLines : [`- None derived from the slice doc.`]), "");
 
-  // Key Entities: Read Model / View ONLY; omit entirely if neither doc has one.
-  const readModelDocs = [primaryDoc, secondaryDoc].filter(
-    (d): d is ParsedSliceDoc => !!d && !!d.readModel
-  );
-  if (readModelDocs.length > 0) {
+  // Key Entities: Read Model / View ONLY; omit entirely if the doc has none.
+  if (primaryDoc.readModel) {
     lines.push(`### Key Entities`, "");
-    const seen = new Set<string>();
-    for (const doc of readModelDocs) {
-      const rm = doc.readModel!;
-      if (seen.has(rm.view)) continue;
-      seen.add(rm.view);
-      const desc = [
-        rm.builtFromEvents ? `built from ${rm.builtFromEvents}` : "",
-        rm.consumedBy ? `consumed by ${rm.consumedBy}` : "",
-      ]
-        .filter(Boolean)
-        .join("; ");
-      lines.push(`- **${rm.view}**: ${desc || "read model produced by this slice"}`);
-    }
+    const rm = primaryDoc.readModel;
+    const desc = [
+      rm.builtFromEvents ? `built from ${rm.builtFromEvents}` : "",
+      rm.consumedBy ? `consumed by ${rm.consumedBy}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+    lines.push(`- **${rm.view}**: ${desc || "read model produced by this slice"}`);
     lines.push("");
   }
 
@@ -277,14 +249,13 @@ export function buildSpecMarkdown(opts: BuildSpecOptions): string {
   };
 
   emitOutcomeScs(primaryDoc);
-  if (isBundle) emitOutcomeScs(secondaryDoc!);
 
-  lines.push(...(scLines.length > 0 ? scLines : [`- None derived from the slice doc(s).`]), "");
+  lines.push(...(scLines.length > 0 ? scLines : [`- None derived from the slice doc.`]), "");
 
   // --- Assumptions ---------------------------------------------------
   lines.push(`## Assumptions`, "");
   lines.push(
-    `- No unstated assumptions — slice(s) ratified before this spec was generated ` +
+    `- No unstated assumptions — the slice was ratified before this spec was generated ` +
       `(two-stage ratification: em model review, then this bridge run).`
   );
   lines.push("");
