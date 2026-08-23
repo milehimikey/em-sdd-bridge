@@ -1,13 +1,13 @@
 # fixtures/speckit-scripts
 
-A pinned copy of the spec-kit scripts this bridge wraps, refreshed for the
-FIN-221 port to match `pax8-spec-kit`'s own pinned spec-kit version
+A pinned copy of the spec-kit scripts this bridge wraps, refreshed during a
+downstream port to match that project's own pinned spec-kit version
 (`.speckit-version` = `0.14.4`) wherever a like-for-like file exists:
 
 - `.specify/scripts/bash/common.sh`, `.specify/scripts/bash/create-new-feature.sh`
   (core; always installed) -- copied verbatim from this repo's
   `.specify/scripts/bash/`. Byte-identical to em-sdd-preset's pinned 0.14.2
-  fixture copy (diffed during the FIN-221 port; no drift since 0.14.2).
+  fixture copy (diffed during that port; no drift since 0.14.2).
 - `.specify/templates/spec-template.md` (core; `create-new-feature.sh` copies
   this into new spec dirs) -- copied verbatim from this repo's
   `.specify/templates/`. Also byte-identical to the 0.14.2 fixture.
@@ -32,9 +32,10 @@ FIN-221 port to match `pax8-spec-kit`'s own pinned spec-kit version
 - `.specify/extensions/git/scripts/bash/create-new-feature-branch.sh` --
   **kept, at its original em-sdd-preset 0.14.2 content**, specifically so
   `allocate-feature.test.ts`'s legacy-fallback tests can exercise
-  `allocate-feature.ts`'s dual-layout probe (FIN-221 adaptation: it checks
-  for `create-new-feature.sh` first, preferring the current name, falling
-  back to this legacy name) against a real project still on that vintage.
+  `allocate-feature.ts`'s dual-layout probe (added during that same port:
+  it checks for `create-new-feature.sh` first, preferring the current name,
+  falling back to this legacy name) against a real project still on that
+  vintage.
   This is the only file this fixture keeps both a current- and legacy-named
   copy of, and deliberately so -- **do not delete this file**, it is load-
   bearing fixture content, not stale leftovers.
