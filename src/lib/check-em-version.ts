@@ -17,13 +17,13 @@
 import { execFileSync } from "node:child_process";
 import { BridgeError } from "./bridge-error.js";
 
-/** `em` version this bridge was last verified against. Bumped in MIL-133
- *  from 1.7.0 to 1.7.1 -- 1.7.1 (MIL-120) is the release that made the
- *  merged Automation/Translation reaction slice shape (reaction + command +
- *  event sharing one slice) canonical, including the `both-ends-of-a-flow`
- *  validation rules (`reaction-no-command` / `command-untriggered`) this
- *  bridge's `--slice-ready` gate now depends on reading correctly. */
-export const MINIMUM_EM_VERSION = "1.7.1";
+/** `em` version this bridge was last verified against. Bumped in MIL-104
+ *  from 1.7.1 to 1.8.0 -- 1.8.0 (MIL-103) is the release that ships
+ *  `em slice mark-implemented <file> <slice-key> <pr-url>`, the native
+ *  frontmatter writer `em-sdd-mark-implemented` now shells out to
+ *  exclusively (lib/em-runner.ts's runEmMarkImplemented) in place of its own
+ *  retired regex body-bullet writer. */
+export const MINIMUM_EM_VERSION = "1.8.0";
 
 export interface Semver {
   major: number;
