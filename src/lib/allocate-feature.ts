@@ -161,6 +161,15 @@ function allocateWithGitExtension(opts: AllocateFeatureOptions, extensionScript:
 }
 
 export function allocateFeature(opts: AllocateFeatureOptions): AllocatedFeature {
+  const coreScript = coreScriptPath(opts.repoRoot);
+  if (!existsSync(coreScript)) {
+    throw new BridgeError(
+      `Missing spec-kit scaffold: expected the core allocation script at ${coreScript}, but it ` +
+        `does not exist. Run spec-kit init first (e.g. \`specify init\`) to install the scaffold, ` +
+        `then retry.`
+    );
+  }
+
   const extensionScript = gitExtensionBranchScriptPath(opts.repoRoot);
   if (extensionScript) {
     return allocateWithGitExtension(opts, extensionScript);
