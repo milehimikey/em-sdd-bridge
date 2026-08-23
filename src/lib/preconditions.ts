@@ -44,8 +44,9 @@ export interface PreconditionOptions {
    *  design-completeness gate inspects (slices/, typespec/, event model). */
   modelPath: string;
   exportModel: ExportedModel;
-  /** The slice(s) being bridged: the sole slice, or [reactor, state-change]
-   *  for a validated Automation/Translation pair. */
+  /** The slice being bridged, wrapped in a single-element array (one slice
+   *  per bridge invocation -- see lib/pattern-validate.ts). An array for
+   *  historical/defensive reasons only; every caller passes exactly one. */
   slices: ExportedSlice[];
   /** Shared `--doc` override, if the caller passed one. */
   docOverride?: string;
@@ -140,17 +141,22 @@ function pascalCase(name: string): string {
     .join("");
 }
 
-/** Required events = this slice set's emitted AND consumed event element
- *  names (the slice's emitted/consumed event element names),
- *  PascalCase-normalized ("Ping Recorded" -> "PingRecorded"). Consumed events
- *  surface via a view/processor element's `from` refs in the `em export`
- *  JSON. */
+/** Required events = this slice's emitted AND consumed event element names,
+ *  PascalCase-normalized ("Ping Recorded" -> "PingRecorded"). Consumed
+ *  events surface via a VIEW element's `from` refs in the `em export` JSON
+ *  -- a view's `from` always resolves to event(s) (em-dsl.md: "a view's
+ *  `from` resolves ONLY to events"). A reaction element's own `from`
+ *  (`processor`/`translation`/`automation`/`saga`) resolves to a READ MODEL
+ *  under the merged Automation/Translation shape (`em` >=1.7.1, MIL-120) --
+ *  e.g. `processor Notify On Ping from "Pings To Notify"` -- so it is
+ *  deliberately excluded here: that referenced name is a view, not an event
+ *  type, and requiring it as one would be a false positive. */
 function requiredEventNames(slices: ExportedSlice[]): string[] {
   const names = new Set<string>();
   for (const slice of slices) {
     for (const el of slice.elements) {
       if (el.kind === "event") names.add(el.name);
-      if (el.from) for (const ref of el.from) names.add(ref.name);
+      if (el.kind === "view" && el.from) for (const ref of el.from) names.add(ref.name);
     }
   }
   return [...names].map(pascalCase).sort();

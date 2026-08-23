@@ -73,35 +73,30 @@ describe("buildSpecMarkdown", () => {
     expect(content).toMatch(/System MUST expose `Recent Pings` reflecting "Ping Recorded" with eventual consistency\./);
   });
 
-  it("renders a bundled Automation pair as one spec with interleaved scenarios and FRs", () => {
-    const primaryDoc = loadDoc("pings-to-notify.md", "automation");
-    const secondaryDoc = loadDoc("send-notification.md", "state-change");
+  it("renders a merged Automation slice (reaction + command + event share one slice) as a single spec", () => {
+    const primaryDoc = loadDoc("send-notification.md", "automation");
     const content = buildSpecMarkdown({
-      branchName: "009-pings-to-notify",
+      branchName: "009-send-notification",
       date: "2026-07-27",
-      keys: ["pings-to-notify", "send-notification"],
+      keys: ["send-notification"],
       pattern: primaryDoc.pattern,
       primaryDoc,
-      secondaryDoc,
-      sliceDocRelPaths: ["slices/pings-to-notify.md", "slices/send-notification.md"],
+      sliceDocRelPaths: ["slices/send-notification.md"],
       modelName: "model.em",
       modelDir: fixturesDir,
     });
 
-    expect(content).toContain("# Feature Specification: Pings To Notify");
+    expect(content).toContain("# Feature Specification: Send Notification");
     expect(content).toContain(
-      "**Traceability**: slice key(s) `pings-to-notify`, `send-notification` · pattern `automation`"
+      "**Traceability**: slice key(s) `send-notification` · pattern `automation`"
     );
-    expect(content).toContain(
-      "**Independent Test**: Tested as a unit with `Send Notification` — not independently testable per the Automation/Translation bundling rule (see the project's constitution)."
-    );
-    expect(content).toContain("### User Story 1 - Pings To Notify (Priority: P1)");
-    // Only one User Story per the mapping contract's bundling rule.
+    expect(content).toContain("### User Story 1 - Send Notification (Priority: P1)");
+    // Only one User Story -- one slice, one spec, no exception.
     expect(content).not.toContain("### User Story 2");
 
-    // Both slices' INV-1s appear, scoped (not merged/renumbered).
-    const invMatches = content.match(/\(INV-1\)/g) ?? [];
-    expect(invMatches.length).toBe(2);
+    // Both of this single merged doc's invariants (INV-1, INV-2) appear.
+    expect(content).toMatch(/\(INV-1\)/);
+    expect(content).toMatch(/\(INV-2\)/);
   });
 
   // A sanctioned adaptation from an earlier version of this renderer: it

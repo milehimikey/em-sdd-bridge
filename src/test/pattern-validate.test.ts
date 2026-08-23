@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateSliceKeys } from "../lib/pattern-validate.js";
-import { BridgeError } from "../lib/bridge-error.js";
 import type { ExportedModel } from "../lib/export-model.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,35 +14,36 @@ describe("validateSliceKeys", () => {
   it("accepts a single slice key", () => {
     const result = validateSliceKeys(exportModel, ["record-ping"]);
     expect(result.primary.key).toBe("record-ping");
-    expect(result.secondary).toBeUndefined();
   });
 
-  it("accepts a pattern-mandated reaction -> state-change pair, reactor first", () => {
-    const result = validateSliceKeys(exportModel, ["pings-to-notify", "send-notification"]);
-    expect(result.primary.key).toBe("pings-to-notify");
-    expect(result.secondary?.key).toBe("send-notification");
+  it("accepts a single merged Automation slice key (reaction + command + event share one slice)", () => {
+    const result = validateSliceKeys(exportModel, ["send-notification"]);
+    expect(result.primary.key).toBe("send-notification");
+    expect(result.primary.pattern).toBe("automation");
   });
 
-  it("accepts the same pair given in the other order", () => {
-    const result = validateSliceKeys(exportModel, ["send-notification", "pings-to-notify"]);
-    expect(result.primary.key).toBe("pings-to-notify");
-    expect(result.secondary?.key).toBe("send-notification");
-  });
-
-  it("refuses two slices that are not a reaction/state-change pair", () => {
+  it("refuses two slice keys, pointing at the merged shape and a single slice key", () => {
     expect(() => validateSliceKeys(exportModel, ["record-ping", "recent-pings"])).toThrow(
-      /not a pattern-mandated Automation\/Translation pair/
+      /exactly one slice key/
+    );
+    expect(() => validateSliceKeys(exportModel, ["record-ping", "recent-pings"])).toThrow(
+      /merged Automation\/Translation reaction shape/
     );
   });
 
-  it("refuses a reaction paired with a non-adjacent state-change slice", () => {
-    expect(() => validateSliceKeys(exportModel, ["pings-to-notify", "record-ping"])).toThrow(BridgeError);
+  // Even a key pair that WOULD have been a valid pattern-mandated bundle
+  // under the old two-slice split is refused now -- there is no longer any
+  // shape of 2-key invocation the bridge accepts.
+  it("refuses two slice keys even when they'd have formed the old reactor/state-change pair", () => {
+    expect(() => validateSliceKeys(exportModel, ["pings-to-notify", "send-notification"])).toThrow(
+      /exactly one slice key/
+    );
   });
 
-  it("refuses more than two slice keys", () => {
+  it("refuses more than two slice keys with the same merged-shape message", () => {
     expect(() =>
       validateSliceKeys(exportModel, ["record-ping", "recent-pings", "pings-to-notify"])
-    ).toThrow(/out of scope/);
+    ).toThrow(/exactly one slice key/);
   });
 
   it("refuses an unknown slice key", () => {
