@@ -46,7 +46,7 @@ describe("assertMinimumEmVersion", () => {
   it("throws a BridgeError with an actionable message when em is not on PATH", () => {
     expect(() => assertMinimumEmVersion(MINIMUM_EM_VERSION, () => undefined)).toThrow(BridgeError);
     expect(() => assertMinimumEmVersion(MINIMUM_EM_VERSION, () => undefined)).toThrow(
-      /not found on PATH.*em-sdd-bridge requires `em` >=1\.7\.0/s
+      /not found on PATH.*em-sdd-bridge requires `em` >=1\.7\.1/s
     );
   });
 

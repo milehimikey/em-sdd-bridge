@@ -30,7 +30,7 @@ function hasEm(): boolean {
 // Skips gracefully in environments without the `em` CLI on PATH.
 //
 // --skip-design-gate: these tests exercise bridge mechanics (spec.md
-// rendering, bundling) unrelated to the design-completeness gate /
+// rendering, allocation) unrelated to the design-completeness gate /
 // events-first prerequisite. This fixture's component dir has no real
 // consumer source tree to search and this environment has no TypeSpec
 // compiler installed, so the gate would otherwise always fail here -- see
@@ -55,9 +55,8 @@ describe.skipIf(!hasEm())("runBridge (dry-run, real em + real create-new-feature
     expect(result.content).toMatch(/\(INV-1\)/);
   });
 
-  it("produces a bundled spec.md for the Automation pattern-pair", () => {
+  it("produces a structurally valid spec.md for the merged Automation slice (reaction + command + event)", () => {
     const result = runBridge([
-      "pings-to-notify",
       "send-notification",
       "--repo-root",
       repoRoot,
@@ -67,18 +66,18 @@ describe.skipIf(!hasEm())("runBridge (dry-run, real em + real create-new-feature
       "--skip-design-gate",
     ]);
 
-    expect(result.branchName).toMatch(/^\d{3}-pings-to-notify$/);
+    expect(result.branchName).toMatch(/^\d{3}-send-notification$/);
+    expect(result.content).toContain("# Feature Specification: Send Notification");
     expect(result.content).toContain(
-      "**Traceability**: slice key(s) `pings-to-notify`, `send-notification` · pattern `automation`"
+      "**Traceability**: slice key(s) `send-notification` · pattern `automation`"
     );
   });
 
-  it("refuses more than a pattern-mandated pair", () => {
+  it("refuses more than one slice key, pointing at the merged shape", () => {
     expect(() =>
       runBridge([
         "record-ping",
         "recent-pings",
-        "pings-to-notify",
         "--repo-root",
         repoRoot,
         "--model",
@@ -86,6 +85,6 @@ describe.skipIf(!hasEm())("runBridge (dry-run, real em + real create-new-feature
         "--dry-run",
         "--skip-design-gate",
       ])
-    ).toThrow(/out of scope/);
+    ).toThrow(/merged Automation\/Translation reaction shape/);
   });
 });

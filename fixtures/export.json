@@ -2,7 +2,7 @@
   "schemaVersion": "1.5",
   "generator": {
     "name": "@example-org/em",
-    "version": "1.7.0"
+    "version": "1.7.1"
   },
   "source": {
     "path": "bridge/fixtures/model.em",
@@ -159,18 +159,18 @@
         "name": "Pings To Notify",
         "index": 2,
         "line": 24,
-        "pattern": "automation",
+        "pattern": "state-view",
         "doc": {
-          "found": true,
+          "found": false,
           "path": "slices/pings-to-notify.md",
-          "reason": null,
-          "status": "ready-to-implement",
-          "version": 1,
+          "reason": "no-doc-bound",
+          "status": null,
+          "version": null,
           "implementedIn": null,
           "splitFrom": null,
           "mergedFrom": [],
           "supersededBy": [],
-          "driftSignal": "never-implemented"
+          "driftSignal": null
         },
         "elements": [
           {
@@ -191,20 +191,6 @@
             "context": null,
             "again": false,
             "logicalRef": null
-          },
-          {
-            "ref": "pings-to-notify/processor.notify-on-ping",
-            "kind": "processor",
-            "name": "Notify On Ping",
-            "line": 26,
-            "fields": null,
-            "note": "slices/pings-to-notify.md",
-            "issue": null,
-            "from": null,
-            "persona": null,
-            "context": null,
-            "again": false,
-            "logicalRef": null
           }
         ]
       },
@@ -212,8 +198,8 @@
         "key": "send-notification",
         "name": "Send Notification",
         "index": 3,
-        "line": 29,
-        "pattern": "state-change",
+        "line": 28,
+        "pattern": "automation",
         "doc": {
           "found": true,
           "path": "slices/send-notification.md",
@@ -227,6 +213,25 @@
           "driftSignal": "never-implemented"
         },
         "elements": [
+          {
+            "ref": "send-notification/processor.notify-on-ping",
+            "kind": "processor",
+            "name": "Notify On Ping",
+            "line": 29,
+            "fields": null,
+            "note": "slices/send-notification.md",
+            "issue": null,
+            "from": [
+              {
+                "name": "Pings To Notify",
+                "ref": "pings-to-notify/view.pings-to-notify"
+              }
+            ],
+            "persona": null,
+            "context": null,
+            "again": false,
+            "logicalRef": null
+          },
           {
             "ref": "send-notification/command.send-notification",
             "kind": "command",
@@ -242,7 +247,7 @@
                 "type": "string"
               }
             ],
-            "note": "slices/send-notification.md",
+            "note": null,
             "issue": null,
             "from": null,
             "persona": null,

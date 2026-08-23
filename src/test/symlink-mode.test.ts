@@ -157,11 +157,11 @@ describe.skipIf(!hasEm())("--symlink mode (redirection: spec.md is a link to the
     expect(result.content).not.toContain("# Feature Specification");
   });
 
-  it("refuses a two-doc bundle: a symlink cannot point at two slice docs", () => {
+  it("refuses two slice keys under --symlink too: one slice key per invocation, no exception", () => {
     expect(() =>
       runBridge([
-        "pings-to-notify",
-        "send-notification",
+        "record-ping",
+        "recent-pings",
         "--repo-root",
         fixtureRepoRoot,
         "--model",
@@ -170,7 +170,7 @@ describe.skipIf(!hasEm())("--symlink mode (redirection: spec.md is a link to the
         "--dry-run",
         "--skip-design-gate",
       ])
-    ).toThrow(/--symlink cannot represent a two-doc bundle/);
+    ).toThrow(/exactly one slice key/);
   });
 
   it("still enforces the readiness gate: a non-ready slice does not get linked", () => {

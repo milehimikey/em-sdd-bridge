@@ -18,12 +18,12 @@ describe("ExportedSlice.pattern (em-derived, MIL-94)", () => {
     expect(findSliceByKey(exportModel, "recent-pings")!.pattern).toBe("state-view");
   });
 
-  it("carries the model-derived pattern for a processor slice, distinguishing automation from translation", () => {
-    expect(findSliceByKey(exportModel, "pings-to-notify")!.pattern).toBe("automation");
+  it("carries the model-derived pattern for a view-only 'to-do list' slice feeding a reaction", () => {
+    expect(findSliceByKey(exportModel, "pings-to-notify")!.pattern).toBe("state-view");
   });
 
-  it("carries the model-derived pattern for the triggered command+event slice", () => {
-    expect(findSliceByKey(exportModel, "send-notification")!.pattern).toBe("state-change");
+  it("carries the model-derived pattern for the merged reaction+command+event slice, distinguishing automation from translation", () => {
+    expect(findSliceByKey(exportModel, "send-notification")!.pattern).toBe("automation");
   });
 });
 

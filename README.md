@@ -17,7 +17,7 @@ without npx trying to fetch a package literally named
 `em-sdd-mark-implemented` (which doesn't exist):
 
 ```sh
-npx em-sdd-bridge@<pinned-version> <slice-key> [<slice-key>] [--dry-run]
+npx em-sdd-bridge@<pinned-version> <slice-key> [--dry-run]
 npx -p em-sdd-bridge@<pinned-version> em-sdd-mark-implemented <slice-key> <pr-url>
 ```
 
@@ -31,7 +31,7 @@ resolving a non-matching bin out of a package npx hasn't already installed):
 
 ```sh
 npm install --save-dev em-sdd-bridge
-npx em-sdd-bridge <slice-key> [<slice-key>] [--dry-run]
+npx em-sdd-bridge <slice-key> [--dry-run]
 npx em-sdd-mark-implemented <slice-key> <pr-url>
 ```
 
@@ -39,9 +39,8 @@ npx em-sdd-mark-implemented <slice-key> <pr-url>
 
 ```sh
 # Allocate a spec-kit feature (git branch + spec dir) and render spec.md
-# from one (or a pattern-mandated pair of) ratified em slice doc(s). Never calls
-# /speckit.specify.
-npx em-sdd-bridge <slice-key> [<slice-key>] [--dry-run]
+# from one ratified em slice doc. Never calls /speckit.specify.
+npx em-sdd-bridge <slice-key> [--dry-run]
 
 # Flip a slice doc's Status -> implemented and fill Implemented in -> a PR URL.
 # (shown here as installed locally; see Install above for the npx -p form
@@ -92,12 +91,6 @@ command prints it on success -- paste it into the PR description.
 
 Caveats:
 
-- **Two-doc bundles can't be linked, at all** -- a symlink points at one
-  file, but a pattern-pair always resolves to two slice docs now (see
-  "Readiness" below: `em validate --slice-ready` gates per key against each
-  key's own `slices/<key>.md`, so a bundle whose two keys share a single
-  doc via `--doc` can no longer pass readiness for the secondary key
-  regardless of mode). Use the default emission mode for bundles.
 - **POSIX only.** Symlink creation on Windows requires elevated privileges;
   use emission there.
 - Downstream spec-kit prompts written against spec-template section names
@@ -276,11 +269,12 @@ Implements your project's slice-to-spec mapping contract (the doc that
 defines each slice-doc-template section's mapping to a `spec.md` section --
 in this bridge's originating project, `docs/slice-to-spec-mapping.md`; that
 doc is a convention for the *consuming* spec-kit project to define, not a
-file this package ships or requires under that exact name) and a
-one-slice-per-branch / Automation-Translation-bundling granularity rule
-(bundling is permitted ONLY for a pattern-mandated Automation/Translation
-pair -- the reactor/translator slice plus the state-change slice it
-triggers; see `src/lib/pattern-validate.ts`).
+file this package ships or requires under that exact name) and a strict
+one-slice-per-branch granularity rule: as of the merged Automation/
+Translation reaction shape (`em` >=1.7.1, MIL-120), a reaction, the command
+it triggers, and the event that command emits all live in ONE slice, so
+1 slice = 1 spec = 1 PR holds with no exception -- a multi-key invocation is
+refused outright (see `src/lib/pattern-validate.ts`).
 
 ## Tests
 
@@ -290,13 +284,14 @@ npm run typecheck
 ```
 
 `fixtures/model.em` + `fixtures/export.json` model a walking-skeleton "Ping"
-subject (State Change + State View + an Automation pair) so the bundling path
-is exercised end to end, including a real `em export` + real
-`create-new-feature.sh --dry-run` integration test (skips gracefully if `em`
-isn't on PATH). `fixtures/typespec/main.tsp` is a minimal, dependency-free
-TypeSpec model; positive-path compile assertions are gated on a `hasTsp()`
-helper (mirroring `hasEm()`) and skip gracefully when `@typespec/compiler`'s
-`tsp` binary isn't installed.
+subject (State Change + State View + a merged Automation slice -- reaction,
+command, and event sharing one slice, per the `em` >=1.7.1 shape) so a real
+`em export` + real `create-new-feature.sh --dry-run` integration test is
+exercised end to end (skips gracefully if `em` isn't on PATH).
+`fixtures/typespec/main.tsp` is a minimal, dependency-free TypeSpec model;
+positive-path compile assertions are gated on a `hasTsp()` helper (mirroring
+`hasEm()`) and skip gracefully when `@typespec/compiler`'s `tsp` binary isn't
+installed.
 
 `src/test/allocate-feature.test.ts` builds scratch git repos (temp dirs, not
 the real checkout) with the installed spec-kit scripts copied in, to prove
