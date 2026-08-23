@@ -19,7 +19,7 @@
     "mark-implemented": "tsx src/mark-implemented.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm run typecheck && npm test"
   },
   "engines": {
     "node": ">=20"
