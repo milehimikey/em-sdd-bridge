@@ -48,26 +48,22 @@ npx em-sdd-bridge <slice-key> [--dry-run]
 npx em-sdd-mark-implemented <slice-key> <pr-url>
 ```
 
-**Caveat (0.3.0): `em-sdd-mark-implemented` still edits the legacy body-label
-bullets** (`- **Status:**` / `- **Implemented in:**`), not the canonical YAML
-frontmatter this same release makes the sole source of truth for
-`em-sdd-bridge` and `em` itself. Against a frontmatter-only doc (the shape
-every doc should now be authored in) it fails loudly and refuses -- no
-`- **Status:**` bullet to find. Against a doc that still carries both
-dialects, it "succeeds" but only flips the now-inert body bullet: the real,
-frontmatter-derived status is untouched, a silent no-op from `em`'s and the
-bridge's perspective.
+**Native, as of 0.4.0: `em-sdd-mark-implemented` is a thin wrapper.** It no
+longer edits a slice doc itself at all. It resolves the `.em` model to use
+(the same `resolveModelPath` convention `em export`/`em validate
+--slice-ready` already use -- an explicit `--model` override, or the sole
+`*.em` file at `--repo-root`) and shells out to `em slice mark-implemented
+<model> <slice-key> <pr-url>` (MIL-103, requires `em` >=1.8.0), the native
+frontmatter writer -- same promotion precedent as `--slice-ready` (MIL-87),
+and the write-side mirror of the bridge's own frontmatter *reading* being
+retired in 0.3.0 (MIL-94). One writer implementation (em's), not two.
 
-**Resolved (MIL-101): native, bridge becomes a thin wrapper.** `em` will ship
-`em slice mark-implemented <key> <pr-url>` as a frontmatter writer -- same
-promotion precedent as `--slice-ready` (MIL-87), and the write-side mirror of
-retiring the bridge's own frontmatter *reading* in this same release (MIL-94).
-`em-sdd-mark-implemented` will migrate to shell out to that command instead of
-regex-editing body bullets. Until that migration lands (tracked as
-[MIL-103](https://linear.app/milehimikey/issue/MIL-103/em-native-em-slice-mark-implemented-key-pr-url-frontmatter)
--> [MIL-104](https://linear.app/milehimikey/issue/MIL-104/em-sdd-bridge-migrate-em-sdd-mark-implemented-to-a-thin-wrapper-over)),
-the caveat above still applies -- don't rely on this command against a
-frontmatter-only doc.
+`em`'s own stdout/stderr and exit code are relayed verbatim -- never parsed
+or pattern-matched, since `em` owns that format and can change it freely.
+That means it's `em`'s behavior that governs here: idempotent when re-run
+with the same PR URL; refuses (non-zero exit) if the slice doc is already
+`implemented` with a *different* URL; never touches `version:` or the doc
+body.
 
 ### `--symlink`: redirection mode (no rendered spec.md at all)
 
@@ -333,8 +329,9 @@ node_modules/.bin/em-sdd-bridge <slice-key> --symlink --dry-run --skip-design-ga
 pure parsing/comparison-logic tests via dependency injection (no `em` binary
 needed to exercise "missing", "unparseable", and "below floor" branches
 deterministically), plus a `hasEm()`-gated integration test against the real
-installed `em`. Because the version check now runs unconditionally at the
-top of both entry points, `src/test/mark-implemented.cli.test.ts` -- which
-exercises the `--file` codepath that otherwise never shells out to `em` --
-is now also gated on `hasEm()`, so CI (which deliberately does not install
-`em`) skips it instead of failing.
+installed `em`. `em-sdd-mark-implemented` is now a thin wrapper with nothing
+left to unit-test in isolation from `em` itself, so
+`src/test/mark-implemented.cli.test.ts` shells out to the real installed
+`em` throughout, `hasEm()`-gated like every other em-dependent test in this
+suite, so CI (which deliberately does not install `em`) skips it instead of
+failing.

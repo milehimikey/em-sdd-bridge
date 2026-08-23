@@ -7,14 +7,6 @@ version: 1
 ---
 # Slice: Record Ping
 
-<!-- Legacy body-label bullets, kept solely for mark-implemented-doc.ts's
-     STATUS_RE/IMPLEMENTED_IN_RE (out of scope for MIL-94, still regex-edits
-     these lines directly). em/the bridge itself now reads status/pattern
-     from the frontmatter above, not from these -- editing them here does
-     NOT flip the doc's real status; only frontmatter does. -->
-- **Status:** ready-to-implement
-- **Implemented in:**
-
 ## Intent
 Give the Integrator a way to record that a ping happened, so the walking skeleton has a real, auditable write path end to end. This is the throwaway subject for the Phase 1 walking skeleton (goal-spec: RecordPing -> PingRecorded -> RecentPings).
 
