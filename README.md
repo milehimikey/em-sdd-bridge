@@ -146,6 +146,35 @@ of silently degrading to the no-git-extension fallback.
 consuming project -- the bridge never stages or commits it, and committing
 it causes merge conflicts across concurrent slice branches.
 
+## Verified spec-kit vintage
+
+`allocate-feature.ts` shells out to your project's installed spec-kit
+scripts with a fixed set of flags (`--json`, `--dry-run`, `--short-name`,
+`--number`, ...) -- it never negotiates or probes for script capabilities at
+allocation time. That contract is verified against the spec-kit vintage
+pinned in this package's `fixtures/speckit-scripts/` (see that directory's
+own README for the exact version last verified).
+
+**A fresh `specify init` is not guaranteed to produce a compatible
+scaffold.** Confirmed real drift (MIL-150, 2026-08-23): a scaffold produced
+by upstream `specify init` shipped a core `create-new-feature.sh` that did
+not understand `--short-name`/`--number` at all -- and, worse, silently
+folded the unrecognized flags into the feature description instead of
+erroring, which would otherwise surface many steps downstream as a
+confusing failure (a JSON parse error, or a garbled feature/branch name)
+with no hint that the real cause is scaffold incompatibility.
+
+To catch this before it can produce a bad allocation, `em-sdd-bridge` runs
+`src/lib/check-speckit-scaffold.ts` immediately after locating the repo
+root, before any other work: it reads the installed core script (and the
+git extension's branch script, if installed) and fails closed, naming
+exactly which required flag(s) are missing from which file, if either
+script's own source doesn't declare a case-pattern arm for them. If this
+check fails, replace the named script(s) -- and their siblings
+(`common.sh` alongside the core script; `git-common.sh` alongside the git
+extension's) -- with the pinned, verified-compatible copies from this
+package's `fixtures/speckit-scripts/.specify/` tree.
+
 ## Minimum `em` version
 
 `em-sdd-bridge` shells out to `em --version` and fails closed if `em` is

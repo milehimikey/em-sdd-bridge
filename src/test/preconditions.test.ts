@@ -54,6 +54,20 @@ function buildComponentDir(opts: { withTypespec: boolean }): string {
   return dir;
 }
 
+/** Seeds `repoRoot/.specify/scripts/bash/` with the real, pinned,
+ *  verified-compatible core script (+ its common.sh) from the good
+ *  fixture -- so runBridge's scaffold flag-compatibility check
+ *  (lib/check-speckit-scaffold.ts, runs before design-completeness) passes
+ *  and the tests below reach the design-completeness / events-first checks
+ *  they actually mean to exercise. */
+function seedSpeckitScaffold(repoRoot: string): void {
+  const destDir = path.join(repoRoot, ".specify", "scripts", "bash");
+  mkdirSync(destDir, { recursive: true });
+  for (const file of ["create-new-feature.sh", "common.sh"]) {
+    cpSync(path.join(fixturesDir, "speckit-scripts", ".specify", "scripts", "bash", file), path.join(destDir, file));
+  }
+}
+
 function recordPingSlice(): ExportedSlice {
   return findSliceByKey(exportModel, "record-ping")!;
 }
@@ -400,6 +414,7 @@ describe.skipIf(!hasEm())("runBridge wiring (no --skip-design-gate)", () => {
   it("refuses when the component dir has no typespec/main.tsp", () => {
     const componentDir = buildComponentDir({ withTypespec: false });
     const repoRoot = mkTmp("bridge-wiring-repo-");
+    seedSpeckitScaffold(repoRoot);
     expect(() =>
       runBridge(["record-ping", "--repo-root", repoRoot, "--model", path.join(componentDir, "model.em")])
     ).toThrow(/No typespec\/main\.tsp found/);
@@ -407,7 +422,8 @@ describe.skipIf(!hasEm())("runBridge wiring (no --skip-design-gate)", () => {
 
   it("refuses when a required event has no type declaration anywhere in the consumer tree", () => {
     const componentDir = buildComponentDir({ withTypespec: true });
-    const repoRoot = mkTmp("bridge-wiring-repo-"); // empty: no .kt/.ts files at all
+    const repoRoot = mkTmp("bridge-wiring-repo-"); // no .kt/.ts files at all
+    seedSpeckitScaffold(repoRoot);
     expect(() =>
       runBridge(["record-ping", "--repo-root", repoRoot, "--model", path.join(componentDir, "model.em")])
     ).toThrow(/Missing event type declaration.*PingRecorded/s);

@@ -13,14 +13,16 @@
  * 1 slice = 1 spec = 1 PR holds with no exception -- see
  * lib/pattern-validate.ts.
  *
- * See lib/*.ts for the pipeline: minimum-em-version check -> em export ->
- * validate the slice key (from export's slice.pattern) -> the
- * design-completeness / events-first preconditions -> readiness gate
- * (delegated to `em validate --slice-ready`, lib/slice-readiness.ts) ->
- * locate + parse the slice doc's body content -> allocate the spec-kit
- * feature (git branch, created + checked out, via the installed git
- * extension when present; spec dir, under the SAME number, via the
- * installed create-new-feature.sh -- see lib/allocate-feature.ts) ->
+ * See lib/*.ts for the pipeline: minimum-em-version check -> spec-kit
+ * scaffold flag-compatibility check (lib/check-speckit-scaffold.ts, MIL-150
+ * -- fails closed if the installed scaffold's scripts don't support the
+ * flags below) -> em export -> validate the slice key (from export's
+ * slice.pattern) -> the design-completeness / events-first preconditions ->
+ * readiness gate (delegated to `em validate --slice-ready`,
+ * lib/slice-readiness.ts) -> locate + parse the slice doc's body content ->
+ * allocate the spec-kit feature (git branch, created + checked out, via the
+ * installed git extension when present; spec dir, under the SAME number,
+ * via the installed create-new-feature.sh -- see lib/allocate-feature.ts) ->
  * materialize spec.md.
  *
  * Materialization has two modes (the "who bends" adapter decision):
@@ -57,6 +59,7 @@ import { readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertMinimumEmVersion } from "./lib/check-em-version.js";
+import { assertSpeckitScaffoldCompat } from "./lib/check-speckit-scaffold.js";
 import { parseArgs } from "./lib/cli-args.js";
 import { findRepoRoot } from "./lib/repo.js";
 import { resolveModelPath, runEmExport } from "./lib/em-runner.js";
@@ -110,6 +113,12 @@ export function runBridge(argv: string[]): BridgeResult {
   if (!repoRoot) {
     throw new BridgeError("Could not locate a spec-kit project (no .specify/ directory found upward from cwd).");
   }
+
+  // Scaffold flag-compatibility check runs next, before any em/model work --
+  // cheap (reads two script files), and an incompatible scaffold invalidates
+  // the feature-allocation step regardless of what the model/slice doc say.
+  // See lib/check-speckit-scaffold.ts (MIL-150).
+  assertSpeckitScaffoldCompat(repoRoot);
 
   const modelPath = resolveModelPath(repoRoot, flags["model"]);
   const exportModel = runEmExport(modelPath);
