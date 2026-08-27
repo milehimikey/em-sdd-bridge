@@ -99,7 +99,10 @@ function runJsonScript<T>(script: string, args: string[], repoRoot: string): T {
   return JSON.parse(stdout.trim()) as T;
 }
 
-function coreScriptPath(repoRoot: string): string {
+/** Exported so lib/check-speckit-scaffold.ts can probe the same file this
+ *  module actually invokes, rather than re-deriving the path independently
+ *  and risking the two drifting apart. */
+export function coreScriptPath(repoRoot: string): string {
   return path.join(repoRoot, ".specify", "scripts", "bash", "create-new-feature.sh");
 }
 
@@ -108,9 +111,9 @@ function coreScriptPath(repoRoot: string): string {
  * current spec-kit filename and falling back to the older-vintage name --
  * see the module doc comment above for the verified-identical contract both
  * filenames share. Returns undefined if neither exists (no git extension
- * installed at all).
+ * installed at all). Exported for the same reason as coreScriptPath above.
  */
-function gitExtensionBranchScriptPath(repoRoot: string): string | undefined {
+export function gitExtensionBranchScriptPath(repoRoot: string): string | undefined {
   const bashDir = path.join(repoRoot, ".specify", "extensions", "git", "scripts", "bash");
   const current = path.join(bashDir, "create-new-feature.sh");
   if (existsSync(current)) return current;
