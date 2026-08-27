@@ -1,6 +1,6 @@
 {
   "name": "em-sdd-bridge",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Deterministic em-slice -> spec-kit bridge: writes spec.md directly from a ratified em slice doc without ever invoking /speckit.specify, plus status -> PR-link automation.",
   "type": "module",
   "bin": {
