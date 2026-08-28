@@ -31,12 +31,12 @@ updating Linear.
 
 ## One-time setup
 
-**Not yet done** — required before the first release through this flow:
-on npmjs.com, package `em-sdd-bridge` → Settings → Publishing access, configure a
-trusted publisher for GitHub Actions, repository `milehimikey/em-sdd-bridge`,
-workflow `release.yml`. This lets the workflow publish via OIDC with no
-NPM_TOKEN secret (and gives packages provenance attestations for free). Mirrors
-the setup already done for `@milehimikey/em` (see that repo's docs/release.md).
+**Configured** — on npmjs.com, package `em-sdd-bridge` → Settings → Publishing
+access has a trusted publisher set up for GitHub Actions, repository
+`milehimikey/em-sdd-bridge`, workflow `release.yml`. This lets the workflow
+publish via OIDC with no NPM_TOKEN secret (and gives packages provenance
+attestations for free). Mirrors the setup already done for `@milehimikey/em`
+(see that repo's docs/release.md). Confirmed working as of v0.4.0 and v0.4.1.
 If the package is ever renamed or the workflow file moves, this needs
 re-configuring to match.
 
