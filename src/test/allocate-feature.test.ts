@@ -266,6 +266,38 @@ describe("allocateFeature (git extension absent -> core-script-only fallback)", 
   });
 });
 
+describe("allocateFeature (spec-kit scaffold script missing)", () => {
+  it("throws a BridgeError naming the expected script path and the spec-kit-init remedy, not a raw ENOENT", () => {
+    // A repo with a `.specify/` dir (so repo-root detection succeeds) but
+    // none of the scaffold scripts underneath it -- e.g. `specify init` was
+    // never run, or was interrupted partway through. Deliberately doesn't
+    // reuse buildScratchRepo(), which always copies create-new-feature.sh in.
+    const dir = mkdtempSync(path.join(tmpdir(), "bridge-allocate-feature-no-scaffold-"));
+    scratchDirs.push(dir);
+    mkdirSync(path.join(dir, ".specify"), { recursive: true });
+    git(["init", "-q", "-b", "main"], dir);
+    git(["config", "user.email", "test@example.com"], dir);
+    git(["config", "user.name", "Test"], dir);
+    writeFileSync(path.join(dir, "README.md"), "placeholder\n");
+    git(["add", "-A"], dir);
+    git(["commit", "-q", "-m", "init"], dir);
+
+    const expectedScript = path.join(dir, ".specify", "scripts", "bash", "create-new-feature.sh");
+    expect(existsSync(expectedScript)).toBe(false);
+
+    const allocate = () =>
+      allocateFeature({
+        repoRoot: dir,
+        shortName: "no-scaffold-thing",
+        description: "Add the no scaffold thing",
+      });
+
+    expect(allocate).toThrow(BridgeError);
+    expect(allocate).toThrow(expectedScript);
+    expect(allocate).toThrow(/spec-kit init/);
+  });
+});
+
 // End-to-end through the actual bridge.ts entrypoint (runBridge), proving a
 // SINGLE invocation produces branch + spec dir + spec.md + feature.json,
 // race-free, against a real (scratch) git repo with the git extension
