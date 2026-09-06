@@ -187,6 +187,39 @@ keeps later error messages honest about what actually went wrong. It fails
 with a plain, actionable message; it never tries to auto-install or
 auto-upgrade `em` for you.
 
+## Constitution advisory
+
+`/speckit.plan` and `/speckit.tasks` read `.specify/memory/constitution.md`
+as the project's governing rules. `specify init` scaffolds that file from a
+stock template full of bracketed placeholder tokens (`[PROJECT_NAME]`,
+`[PRINCIPLE_1_NAME]`, ...), and nothing stops a repo from carrying that
+template, unfilled, indefinitely -- it looks filled from a distance and
+governs nothing.
+
+`em-sdd-bridge` runs `src/lib/check-constitution.ts` right after locating
+the repo root: if `.specify/memory/constitution.md` exists and still
+contains one or more of the stock template's placeholder tokens, it prints
+one warning line to stderr naming every token found, then continues --
+**advisory only, it never gates the run**. A team may legitimately choose to
+run without a filled-in constitution; the point is only that they never do
+so unknowingly. Fill in the constitution (as of `em` >=1.11, the
+`event-modeling-implement` skill has a constitution-elicitation step) or
+ratify a real one to clear the warning.
+
+Detection is mechanical -- a placeholder-token regex over the file's own
+text, the same fail-closed-tooling style as
+`src/lib/check-speckit-scaffold.ts`'s static source inspection -- no LLM,
+no new gate.
+
+**Known gap:** this check is scoped to an *existing* `constitution.md` only
+(per the ticket this shipped under, MIL-203). A repo with **no**
+`.specify/memory/constitution.md` at all gets no signal from this check --
+running without a constitution and running with an unfilled one currently
+look the same (silent) to this bridge. Closing that gap -- e.g. warning on a
+missing file too -- is left for the package owner to decide, since a
+missing file is a more deliberate-looking state than a leftover template and
+may deserve different (or no) messaging.
+
 ## Design-completeness and events-first preconditions
 
 Before allocating a feature, `em-sdd-bridge` runs `src/lib/preconditions.ts`,

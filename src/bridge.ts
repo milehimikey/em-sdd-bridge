@@ -13,10 +13,12 @@
  * 1 slice = 1 spec = 1 PR holds with no exception -- see
  * lib/pattern-validate.ts.
  *
- * See lib/*.ts for the pipeline: minimum-em-version check -> spec-kit
- * scaffold flag-compatibility check (lib/check-speckit-scaffold.ts, MIL-150
- * -- fails closed if the installed scaffold's scripts don't support the
- * flags below) -> em export -> validate the slice key (from export's
+ * See lib/*.ts for the pipeline: minimum-em-version check -> constitution
+ * advisory (lib/check-constitution.ts, MIL-203 -- warns, never gates, if
+ * .specify/memory/constitution.md is still spec-kit's unfilled template) ->
+ * spec-kit scaffold flag-compatibility check (lib/check-speckit-scaffold.ts,
+ * MIL-150 -- fails closed if the installed scaffold's scripts don't support
+ * the flags below) -> em export -> validate the slice key (from export's
  * slice.pattern) -> the design-completeness / events-first preconditions ->
  * readiness gate (delegated to `em validate --slice-ready`,
  * lib/slice-readiness.ts) -> locate + parse the slice doc's body content ->
@@ -60,6 +62,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertMinimumEmVersion } from "./lib/check-em-version.js";
 import { assertSpeckitScaffoldCompat } from "./lib/check-speckit-scaffold.js";
+import { warnIfConstitutionUnfilled } from "./lib/check-constitution.js";
 import { parseArgs } from "./lib/cli-args.js";
 import { findRepoRoot } from "./lib/repo.js";
 import { resolveModelPath, runEmExport } from "./lib/em-runner.js";
@@ -113,6 +116,14 @@ export function runBridge(argv: string[]): BridgeResult {
   if (!repoRoot) {
     throw new BridgeError("Could not locate a spec-kit project (no .specify/ directory found upward from cwd).");
   }
+
+  // Constitution advisory (MIL-203): warn, never gate, when
+  // .specify/memory/constitution.md exists and is still spec-kit's unfilled
+  // template. Runs as soon as repoRoot is known, ahead of every other
+  // precondition, so the warning is visible even if a later gate refuses the
+  // run. Never throws, never affects control flow -- see
+  // lib/check-constitution.ts.
+  warnIfConstitutionUnfilled(repoRoot);
 
   // Scaffold flag-compatibility check runs next, before any em/model work --
   // cheap (reads two script files), and an incompatible scaffold invalidates
