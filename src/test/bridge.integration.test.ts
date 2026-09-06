@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runBridge } from "../bridge.js";
@@ -86,5 +88,97 @@ describe.skipIf(!hasEm())("runBridge (dry-run, real em + real create-new-feature
         "--skip-design-gate",
       ])
     ).toThrow(/merged Automation\/Translation reaction shape/);
+  });
+});
+
+// Constitution advisory (MIL-203): a copy of the speckit-scripts fixture
+// repo, since these tests write into .specify/memory/ and must not mutate
+// the shared fixture used by every other test in this file.
+const constitutionTmpDirs: string[] = [];
+function fixtureRepoWithConstitution(constitutionText: string | undefined): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "bridge-constitution-advisory-"));
+  constitutionTmpDirs.push(dir);
+  cpSync(repoRoot, dir, { recursive: true });
+  if (constitutionText !== undefined) {
+    const memoryDir = path.join(dir, ".specify", "memory");
+    mkdirSync(memoryDir, { recursive: true });
+    writeFileSync(path.join(memoryDir, "constitution.md"), constitutionText, "utf8");
+  }
+  return dir;
+}
+
+afterEach(() => {
+  while (constitutionTmpDirs.length) {
+    rmSync(constitutionTmpDirs.pop()!, { recursive: true, force: true });
+  }
+  vi.restoreAllMocks();
+});
+
+describe.skipIf(!hasEm())("runBridge constitution advisory (MIL-203)", () => {
+  const stockTemplate = `# [PROJECT_NAME] Constitution\n\n## Core Principles\n\n### [PRINCIPLE_1_NAME]\n[PRINCIPLE_1_DESCRIPTION]\n\n## Governance\n\n[GOVERNANCE_RULES]\n\n**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]\n`;
+  const filledConstitution = `# Waitlist Service Constitution\n\n## Core Principles\n\n### I. Library-First\nEvery feature starts as a standalone library.\n\n## Governance\n\nAmendments require review.\n\n**Version**: 1.0.0 | **Ratified**: 2026-09-01 | **Last Amended**: 2026-09-01\n`;
+
+  it("prints the warning to stderr and still succeeds, when constitution.md is the unfilled template", () => {
+    const withConstitution = fixtureRepoWithConstitution(stockTemplate);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = runBridge([
+      "record-ping",
+      "--repo-root",
+      withConstitution,
+      "--model",
+      modelPath,
+      "--dry-run",
+      "--skip-design-gate",
+    ]);
+
+    expect(result.branchName).toMatch(/^\d{3}-record-ping$/);
+    expect(
+      errorSpy.mock.calls.some(
+        (call) =>
+          typeof call[0] === "string" &&
+          call[0].includes("bridge: warning: .specify/memory/constitution.md is still spec-kit's unfilled template")
+      )
+    ).toBe(true);
+  });
+
+  it("prints no constitution warning when constitution.md is filled in", () => {
+    const withConstitution = fixtureRepoWithConstitution(filledConstitution);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = runBridge([
+      "record-ping",
+      "--repo-root",
+      withConstitution,
+      "--model",
+      modelPath,
+      "--dry-run",
+      "--skip-design-gate",
+    ]);
+
+    expect(result.branchName).toMatch(/^\d{3}-record-ping$/);
+    expect(errorSpy.mock.calls.some((call) => typeof call[0] === "string" && call[0].includes("constitution.md"))).toBe(
+      false
+    );
+  });
+
+  it("prints no constitution warning when constitution.md does not exist at all", () => {
+    const withoutConstitution = fixtureRepoWithConstitution(undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = runBridge([
+      "record-ping",
+      "--repo-root",
+      withoutConstitution,
+      "--model",
+      modelPath,
+      "--dry-run",
+      "--skip-design-gate",
+    ]);
+
+    expect(result.branchName).toMatch(/^\d{3}-record-ping$/);
+    expect(errorSpy.mock.calls.some((call) => typeof call[0] === "string" && call[0].includes("constitution.md"))).toBe(
+      false
+    );
   });
 });
