@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { allocateFeature } from "../lib/allocate-feature.js";
+import { allocateFeature, coreScriptCreatesGitBranch } from "../lib/allocate-feature.js";
 import { runBridge } from "../bridge.js";
 import { BridgeError } from "../lib/bridge-error.js";
 
@@ -112,6 +112,38 @@ function buildScratchRepo(extension: "current" | "legacy" | false): string {
   git(["commit", "-q", "-m", "init"], dir);
 
   return dir;
+}
+
+/**
+ * Rewrites the scratch repo's core create-new-feature.sh into a DERIVED
+ * git-capable variant (#14): a copy of the pinned core with a branch-creation
+ * block added that mirrors the issue's description. The fixture itself is never
+ * edited; only the scratch copy is. Committed so the tree stays clean.
+ */
+function makeCoreGitCapable(repo: string): string {
+  const script = path.join(repo, ".specify", "scripts", "bash", "create-new-feature.sh");
+  const anchor = 'if [ "$DRY_RUN" != true ]; then\n    if [ -d "$FEATURE_DIR" ]';
+  const gitBlock = [
+    'if [ "$DRY_RUN" != true ]; then',
+    '    if git rev-parse --verify --quiet "refs/heads/$BRANCH_NAME" >/dev/null 2>&1; then',
+    '        if [ "$ALLOW_EXISTING" = true ]; then',
+    '            git checkout -q "$BRANCH_NAME"',
+    '        else',
+    `            echo "Error: Branch '$BRANCH_NAME' already exists. Please use a different feature name or specify a different number with --number." >&2`,
+    '            exit 1',
+    '        fi',
+    '    else',
+    '        git checkout -q -b "$BRANCH_NAME"',
+    '    fi',
+    'fi',
+    '',
+    '',
+  ].join("\n");
+  const original = readFileSync(script, "utf8");
+  expect(original).toContain(anchor);
+  writeFileSync(script, original.replace(anchor, gitBlock + anchor));
+  git(["commit", "-q", "-am", "derive git-capable core"], repo);
+  return script;
 }
 
 describe("allocateFeature (git extension present via current spec-kit filename, real scratch git repo)", () => {
@@ -242,6 +274,73 @@ describe("allocateFeature (git extension present via legacy filename, real scrat
         description: "Add the colliding thing 2",
       })
     ).toThrow(/branch\/spec-dir name mismatch/);
+  });
+});
+
+describe("coreScriptCreatesGitBranch (static probe, #14)", () => {
+  it("is false for the pinned core script (does not touch git)", () => {
+    expect(coreScriptCreatesGitBranch(path.join(repoRoot, ".specify", "scripts", "bash", "create-new-feature.sh"))).toBe(
+      false
+    );
+  });
+
+  it("is true for a derived core that runs `git checkout -q -b`", () => {
+    const repo = buildScratchRepo("current");
+    expect(coreScriptCreatesGitBranch(makeCoreGitCapable(repo))).toBe(true);
+  });
+
+  it("recognises `git switch -c` and `git branch <name>`, ignores comments and non-creating git calls, and is false for a missing file", () => {
+    const repo = buildScratchRepo(false);
+    const probe = (body: string): boolean => {
+      const f = path.join(repo, "probe.sh");
+      writeFileSync(f, body);
+      return coreScriptCreatesGitBranch(f);
+    };
+    expect(probe('git switch -c "$BRANCH_NAME"\n')).toBe(true);
+    expect(probe('git branch "$BRANCH_NAME"\n')).toBe(true);
+    expect(probe('# git checkout -b "$BRANCH_NAME"\n')).toBe(false);
+    expect(probe('git rev-parse --git-dir\ngit branch --list\ngit checkout main\n')).toBe(false);
+    expect(coreScriptCreatesGitBranch(path.join(repo, "nope.sh"))).toBe(false);
+  });
+});
+
+describe("allocateFeature (extension + git-capable core, #14)", () => {
+  it("reproduces: without --allow-existing-branch the derived core fails 'already exists' after the extension created the branch", () => {
+    const repo = buildScratchRepo("current");
+    const core = makeCoreGitCapable(repo);
+    const ext = path.join(repo, ".specify", "extensions", "git", "scripts", "bash", "create-new-feature.sh");
+    const run = (script: string, args: string[]): string =>
+      execFileSync(script, args, { cwd: repo, encoding: "utf8", env: cleanGitEnv(), stdio: ["ignore", "pipe", "pipe"] });
+
+    const branch = JSON.parse(run(ext, ["--json", "--short-name", "edit-debt", "Edit debt"]));
+    expect(() =>
+      run(core, ["--json", "--short-name", "edit-debt", "--number", branch.FEATURE_NUM, "Edit debt"])
+    ).toThrow(/already exists/);
+  });
+
+  it("real (non-dry-run) allocation succeeds: branch checked out, spec dir aligned", () => {
+    const repo = buildScratchRepo("current");
+    makeCoreGitCapable(repo);
+
+    const allocated = allocateFeature({
+      repoRoot: repo,
+      shortName: "edit-debt",
+      description: "Edit debt",
+    });
+
+    expect(allocated.branchName).toMatch(/^\d{3}-edit-debt$/);
+    expect(git(["rev-parse", "--abbrev-ref", "HEAD"], repo)).toBe(allocated.branchName);
+    expect(path.basename(path.dirname(allocated.specFile))).toBe(allocated.branchName);
+    expect(existsSync(allocated.specFile)).toBe(true);
+    expect(git(["branch", "--list", allocated.branchName], repo)).toContain(allocated.branchName);
+  });
+
+  it("--dry-run still works and creates nothing", () => {
+    const repo = buildScratchRepo("current");
+    makeCoreGitCapable(repo);
+    const allocated = allocateFeature({ repoRoot: repo, shortName: "edit-debt", description: "Edit debt", dryRun: true });
+    expect(git(["branch", "--list", allocated.branchName], repo)).toBe("");
+    expect(existsSync(path.join(repo, "specs"))).toBe(false);
   });
 });
 

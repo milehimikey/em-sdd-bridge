@@ -12,6 +12,7 @@ import {
   readlinkSync,
   realpathSync,
   rmSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -55,7 +56,7 @@ afterEach(() => {
  * Model at repo root, slice docs under slices/ -- mirroring the fixture
  * layout so `note "slices/<name>.md"` bindings keep resolving.
  */
-function buildScratchRepoWithModel(): { repo: string; modelPath: string } {
+function buildScratchRepoWithModel(designDir = ""): { repo: string; modelPath: string } {
   const dir = mkdtempSync(path.join(tmpdir(), "bridge-symlink-mode-"));
   scratchDirs.push(dir);
 
@@ -82,8 +83,12 @@ function buildScratchRepoWithModel(): { repo: string; modelPath: string } {
     chmodSync(dest, 0o755);
   }
 
-  copyFileSync(fixtureModelPath, path.join(dir, "model.em"));
-  cpSync(path.join(fixturesDir, "slices"), path.join(dir, "slices"), { recursive: true });
+  // designDir "" = model at repo root; otherwise a nested design dir, so the
+  // relative link has to cross directories (specs/NNN-x/ -> design/...).
+  const modelDir = path.join(dir, designDir);
+  mkdirSync(modelDir, { recursive: true });
+  copyFileSync(fixtureModelPath, path.join(modelDir, "model.em"));
+  cpSync(path.join(fixturesDir, "slices"), path.join(modelDir, "slices"), { recursive: true });
 
   git(["init", "-q", "-b", "main"], dir);
   git(["config", "user.email", "test@example.com"], dir);
@@ -91,7 +96,7 @@ function buildScratchRepoWithModel(): { repo: string; modelPath: string } {
   git(["add", "-A"], dir);
   git(["commit", "-q", "-m", "init"], dir);
 
-  return { repo: dir, modelPath: path.join(dir, "model.em") };
+  return { repo: dir, modelPath: path.join(modelDir, "model.em") };
 }
 
 describe.skipIf(!hasEm())("--symlink mode (redirection: spec.md is a link to the slice doc)", () => {
@@ -188,5 +193,158 @@ describe.skipIf(!hasEm())("--symlink mode (redirection: spec.md is a link to the
     ).toThrow(/not ready to implement/);
     // And nothing was allocated for it (the gate runs before allocation).
     expect(existsSync(path.join(repo, "specs"))).toBe(false);
+  });
+
+  describe("realistic layout, downstream read-through, worktrees, re-run (#18)", () => {
+    const nested = path.join("design", "event-model");
+
+    /** Scratch repo with symlink-free paths (macOS tmpdir is /var -> /private/var). */
+    function buildResolved(designDir: string): { repo: string; modelPath: string } {
+      const b = buildScratchRepoWithModel(designDir);
+      return { repo: realpathSync(b.repo), modelPath: realpathSync(b.modelPath) };
+    }
+
+    function bash(script: string, cwd: string): string {
+      return execFileSync("bash", ["-c", script], { cwd, encoding: "utf8", env: cleanGitEnv() }).trim();
+    }
+
+    function linkSlice(repo: string, modelPath: string, key = "record-ping") {
+      return runBridge([key, "--repo-root", repo, "--model", modelPath, "--symlink", "--skip-design-gate"]);
+    }
+
+    it("nested design dir: link crosses directories, is relative, and resolves to the slice doc", () => {
+      const { repo, modelPath } = buildResolved(nested);
+      const result = linkSlice(repo, modelPath);
+      const specFile = result.specFile!;
+      const sliceDoc = path.join(repo, nested, "slices", "record-ping.md");
+
+      expect(lstatSync(specFile).isSymbolicLink()).toBe(true);
+      const stored = readlinkSync(specFile);
+      expect(path.isAbsolute(stored)).toBe(false);
+      // specs/NNN-slug/spec.md -> ../../design/event-model/slices/record-ping.md
+      expect(stored).toBe(path.join("..", "..", nested, "slices", "record-ping.md"));
+      expect(realpathSync(specFile)).toBe(realpathSync(sliceDoc));
+      expect(readFileSync(specFile, "utf8")).toBe(readFileSync(sliceDoc, "utf8"));
+    });
+
+    // GAP: when --repo-root is reached through a symlinked path (macOS /tmp and
+    // /var, or a symlinked home/workspace), the allocation scripts report the
+    // physical spec path while the slice doc path stays as given, so
+    // path.relative() climbs to / and back down through the *main checkout's*
+    // absolute path. The link is "relative" but not portable: in a worktree or
+    // clone it silently resolves back into the original tree. Flip to a plain
+    // `it` once bridge.ts realpaths both sides.
+    it.fails("repo-root given via a symlinked path: link target stays repo-relative (GAP)", () => {
+      const { repo } = buildResolved(nested);
+      const aliasParent = mkdtempSync(path.join(tmpdir(), "bridge-symlink-alias-"));
+      scratchDirs.push(aliasParent);
+      const alias = path.join(aliasParent, "alias");
+      symlinkSync(repo, alias);
+
+      const result = linkSlice(alias, path.join(alias, nested, "model.em"));
+      expect(readlinkSync(result.specFile!)).toBe(path.join("..", "..", nested, "slices", "record-ping.md"));
+    });
+
+    it("downstream shell steps read through the link: -f, cat, and common.sh FEATURE_SPEC", () => {
+      const { repo, modelPath } = buildResolved(nested);
+      const result = linkSlice(repo, modelPath);
+      const featureDir = path.dirname(result.specFile!);
+      const sliceDoc = path.join(repo, nested, "slices", "record-ping.md");
+
+      expect(bash("[[ -f spec.md ]] && echo yes", featureDir)).toBe("yes");
+      expect(bash("[[ -s spec.md ]] && echo yes", featureDir)).toBe("yes");
+      expect(bash("cat spec.md", featureDir)).toBe(readFileSync(sliceDoc, "utf8").trim());
+
+      // common.sh as spec-kit's own phase scripts use it: feature.json (written
+      // by the core allocation script) -> get_feature_paths -> FEATURE_SPEC.
+      const paths = bash(
+        `source .specify/scripts/bash/common.sh && eval "$(get_feature_paths --no-persist)" && ` +
+          `[[ -f "$FEATURE_SPEC" ]] && echo "$FEATURE_SPEC" && cat "$FEATURE_SPEC"`,
+        repo
+      );
+      const [featureSpec, ...body] = paths.split("\n");
+      expect(realpathSync(featureSpec)).toBe(realpathSync(result.specFile!));
+      expect(body.join("\n")).toContain("# Slice: Record Ping");
+    });
+
+    it("git worktree: the committed link still resolves in a second checkout", () => {
+      const { repo, modelPath } = buildResolved(nested);
+      const result = linkSlice(repo, modelPath);
+      const rel = path.relative(repo, result.specFile!);
+      expect(rel.startsWith("..")).toBe(false);
+      git(["add", "-A"], repo);
+      git(["commit", "-q", "-m", "linked"], repo);
+      // git stores the link as a symlink blob (mode 120000), not a copy.
+      expect(git(["ls-files", "-s", rel], repo)).toMatch(/^120000 /);
+
+      const wtParent = mkdtempSync(path.join(tmpdir(), "bridge-symlink-wt-"));
+      scratchDirs.push(wtParent);
+      const wt = path.join(wtParent, "wt");
+      try {
+        git(["worktree", "add", "--detach", wt], repo);
+        const wtSpec = path.join(wt, rel);
+        expect(lstatSync(wtSpec).isSymbolicLink()).toBe(true);
+        expect(readlinkSync(wtSpec)).toBe(result.symlinkTarget);
+        // Resolves INSIDE the worktree, not back into the main checkout.
+        const resolved = realpathSync(wtSpec);
+        expect(resolved).toBe(realpathSync(path.join(wt, nested, "slices", "record-ping.md")));
+        expect(resolved.startsWith(realpathSync(wt))).toBe(true);
+        expect(readFileSync(wtSpec, "utf8")).toContain("# Slice: Record Ping");
+      } finally {
+        git(["worktree", "remove", "--force", wt], repo);
+      }
+    });
+
+    it("git worktree: running the bridge from inside a worktree links within that worktree", () => {
+      const { repo } = buildResolved(nested);
+      const wtParent = mkdtempSync(path.join(tmpdir(), "bridge-symlink-wt-"));
+      scratchDirs.push(wtParent);
+      const wt = path.join(wtParent, "wt");
+      git(["worktree", "add", "-q", "-b", "wt-branch", wt], repo);
+      try {
+        const result = linkSlice(wt, path.join(wt, nested, "model.em"));
+        const specFile = result.specFile!;
+        expect(realpathSync(specFile).startsWith(realpathSync(wt))).toBe(true);
+        expect(lstatSync(specFile).isSymbolicLink()).toBe(true);
+        expect(path.isAbsolute(readlinkSync(specFile))).toBe(false);
+        expect(realpathSync(specFile)).toBe(realpathSync(path.join(wt, nested, "slices", "record-ping.md")));
+        expect(git(["rev-parse", "--abbrev-ref", "HEAD"], wt)).toBe(result.branchName);
+        // Main checkout untouched.
+        expect(existsSync(path.join(repo, "specs"))).toBe(false);
+      } finally {
+        git(["worktree", "remove", "--force", wt], repo);
+      }
+    });
+
+    it("re-run for the same slice: first feature's link is neither clobbered nor broken", () => {
+      const { repo, modelPath } = buildResolved(nested);
+      const first = linkSlice(repo, modelPath);
+      const firstTarget = readlinkSync(first.specFile!);
+      const sliceDoc = path.join(repo, nested, "slices", "record-ping.md");
+
+      // Observed behaviour (recorded, not prescribed): the bridge does not
+      // detect the existing feature; it allocates a NEW number and links that.
+      // If this starts throwing instead, that is also a non-clobbering outcome.
+      let second: ReturnType<typeof linkSlice> | undefined;
+      let error: unknown;
+      try {
+        second = linkSlice(repo, modelPath);
+      } catch (e) {
+        error = e;
+      }
+
+      expect(lstatSync(first.specFile!).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(first.specFile!)).toBe(firstTarget);
+      expect(realpathSync(first.specFile!)).toBe(realpathSync(sliceDoc));
+
+      if (second) {
+        expect(second.branchName).not.toBe(first.branchName);
+        expect(second.specFile).not.toBe(first.specFile);
+        expect(lstatSync(second.specFile!).isSymbolicLink()).toBe(true);
+        expect(realpathSync(second.specFile!)).toBe(realpathSync(sliceDoc));
+      } else {
+        expect(error).toBeDefined();
+      }
+    });
   });
 });

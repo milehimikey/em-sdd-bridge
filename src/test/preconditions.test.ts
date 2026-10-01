@@ -68,6 +68,19 @@ function seedSpeckitScaffold(repoRoot: string): void {
   }
 }
 
+/** Writes `.specify/em-sdd.json` under `repoRoot` with the given contents. */
+function writeConfig(repoRoot: string, contents: string): void {
+  mkdirSync(path.join(repoRoot, ".specify"), { recursive: true });
+  writeFileSync(path.join(repoRoot, ".specify", "em-sdd.json"), contents);
+}
+
+/** A temp repo root with events-first opted in (#13: it is off by default). */
+function mkEventsFirstRepo(prefix: string): string {
+  const dir = mkTmp(prefix);
+  writeConfig(dir, JSON.stringify({ eventsFirst: true }));
+  return dir;
+}
+
 function recordPingSlice(): ExportedSlice {
   return findSliceByKey(exportModel, "record-ping")!;
 }
@@ -240,7 +253,7 @@ describe("checkDesignCompleteness", () => {
 
 describe("checkEventsFirst", () => {
   it("passes when every required event has a matching type declaration", () => {
-    const dir = mkTmp("bridge-events-first-present-");
+    const dir = mkEventsFirstRepo("bridge-events-first-present-");
     writeFileSync(
       path.join(dir, "PingRecorded.kt"),
       "data class PingRecorded(val postedAt: String, val source: String)\n"
@@ -255,7 +268,7 @@ describe("checkEventsFirst", () => {
   });
 
   it("matches a TS type alias declaration too", () => {
-    const dir = mkTmp("bridge-events-first-ts-alias-");
+    const dir = mkEventsFirstRepo("bridge-events-first-ts-alias-");
     writeFileSync(path.join(dir, "events.ts"), "export type PingRecorded = { postedAt: string; source: string };\n");
     const failures = checkEventsFirst({
       repoRoot: dir,
@@ -267,7 +280,7 @@ describe("checkEventsFirst", () => {
   });
 
   it("does not false-positive on a longer identifier sharing the same prefix", () => {
-    const dir = mkTmp("bridge-events-first-prefix-");
+    const dir = mkEventsFirstRepo("bridge-events-first-prefix-");
     writeFileSync(path.join(dir, "PingRecordedV2.kt"), "class PingRecordedV2(val postedAt: String)\n");
     const failures = checkEventsFirst({
       repoRoot: dir,
@@ -280,7 +293,7 @@ describe("checkEventsFirst", () => {
   });
 
   it("ignores a bare string-literal mention (not a type declaration)", () => {
-    const dir = mkTmp("bridge-events-first-string-literal-");
+    const dir = mkEventsFirstRepo("bridge-events-first-string-literal-");
     writeFileSync(path.join(dir, "notes.ts"), 'export const label = "PingRecorded";\n');
     const failures = checkEventsFirst({
       repoRoot: dir,
@@ -295,7 +308,7 @@ describe("checkEventsFirst", () => {
   // commented-out declaration satisfied the gate even though no real type
   // exists. Comments (both line and block) must be stripped before matching.
   it("does not count a commented-out declaration (// line comment)", () => {
-    const dir = mkTmp("bridge-events-first-line-comment-");
+    const dir = mkEventsFirstRepo("bridge-events-first-line-comment-");
     writeFileSync(
       path.join(dir, "PingRecorded.kt"),
       "// TODO: bring this back once the schema stabilizes\n" +
@@ -312,7 +325,7 @@ describe("checkEventsFirst", () => {
   });
 
   it("does not count a commented-out declaration (/* block comment */)", () => {
-    const dir = mkTmp("bridge-events-first-block-comment-");
+    const dir = mkEventsFirstRepo("bridge-events-first-block-comment-");
     writeFileSync(
       path.join(dir, "PingRecorded.ts"),
       "/*\n * type PingRecorded = { postedAt: string; source: string };\n */\n"
@@ -328,7 +341,7 @@ describe("checkEventsFirst", () => {
   });
 
   it("still finds a real declaration alongside an unrelated comment mentioning the name", () => {
-    const dir = mkTmp("bridge-events-first-comment-plus-real-");
+    const dir = mkEventsFirstRepo("bridge-events-first-comment-plus-real-");
     writeFileSync(
       path.join(dir, "PingRecorded.kt"),
       "// see PingRecorded for the schema\n" +
@@ -344,7 +357,7 @@ describe("checkEventsFirst", () => {
   });
 
   it("lists every missing event when none are found, and never offers to create them", () => {
-    const dir = mkTmp("bridge-events-first-missing-");
+    const dir = mkEventsFirstRepo("bridge-events-first-missing-");
     const pingsToNotify = findSliceByKey(exportModel, "pings-to-notify")!;
     const sendNotification = findSliceByKey(exportModel, "send-notification")!;
     const failures = checkEventsFirst({
@@ -361,10 +374,85 @@ describe("checkEventsFirst", () => {
   });
 });
 
+describe("checkEventsFirst opt-in (#13)", () => {
+  const check = (repoRoot: string) =>
+    checkEventsFirst({ repoRoot, modelPath, exportModel, slices: [recordPingSlice()] });
+
+  it('"eventsFirst": true refuses a slice whose event type is missing', () => {
+    const dir = mkTmp("bridge-events-first-on-");
+    writeConfig(dir, JSON.stringify({ eventsFirst: true }));
+    const failures = check(dir);
+    expect(failures.length).toBe(1);
+    expect(failures[0]).toMatch(/Missing event type declaration.*PingRecorded/s);
+  });
+
+  it('"eventsFirst": false allows a slice whose event type is missing', () => {
+    const dir = mkTmp("bridge-events-first-off-");
+    writeConfig(dir, JSON.stringify({ eventsFirst: false }));
+    expect(check(dir)).toEqual([]);
+  });
+
+  it("an absent config file defaults to off", () => {
+    expect(check(mkTmp("bridge-events-first-no-config-"))).toEqual([]);
+  });
+
+  it("a config without the eventsFirst field defaults to off", () => {
+    const dir = mkTmp("bridge-events-first-no-field-");
+    writeConfig(dir, JSON.stringify({ contractSource: "none" }));
+    expect(check(dir)).toEqual([]);
+  });
+
+  it.each([["string", '"true"'], ["number", "1"], ["null", "null"], ["object", "{}"]])(
+    "a non-boolean eventsFirst (%s) is a FAILURE, not a silent fallback to off",
+    (_label, raw) => {
+      const dir = mkTmp("bridge-events-first-invalid-");
+      writeConfig(dir, `{ "eventsFirst": ${raw} }`);
+      const failures = check(dir);
+      expect(failures.length).toBe(1);
+      expect(failures[0]).toMatch(/invalid "eventsFirst" value/);
+    }
+  );
+
+  it("malformed JSON is a FAILURE for events-first too (fail-closed)", () => {
+    const dir = mkTmp("bridge-events-first-bad-json-");
+    writeConfig(dir, "{ not json");
+    expect(check(dir).some((f) => /not valid JSON/.test(f))).toBe(true);
+  });
+
+  it("an invalid eventsFirst does not disturb the design-completeness gate", () => {
+    const componentDir = buildComponentDir({ withTypespec: false });
+    writeConfig(componentDir, JSON.stringify({ contractSource: "none", eventsFirst: "yes" }));
+    const failures = checkDesignCompleteness({
+      repoRoot: componentDir,
+      modelPath: path.join(componentDir, "model.em"),
+      exportModel,
+      slices: [recordPingSlice()],
+    });
+    expect(failures).toEqual([]);
+  });
+
+  it("assertPreconditions reports a malformed config once, not once per gate", () => {
+    const componentDir = buildComponentDir({ withTypespec: true });
+    writeConfig(componentDir, "{ not json");
+    try {
+      assertPreconditions({
+        repoRoot: componentDir,
+        modelPath: path.join(componentDir, "model.em"),
+        exportModel,
+        slices: [recordPingSlice()],
+      });
+      expect.fail("expected assertPreconditions to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(BridgeError);
+      expect((err as BridgeError).message.match(/not valid JSON/g)?.length).toBe(1);
+    }
+  });
+});
+
 describe("assertPreconditions", () => {
   it("throws one BridgeError combining design-completeness and events-first failures", () => {
     const componentDir = buildComponentDir({ withTypespec: false }); // fails (d)
-    const emptyRepo = mkTmp("bridge-preconditions-combined-"); // fails events-first too
+    const emptyRepo = mkEventsFirstRepo("bridge-preconditions-combined-"); // fails events-first too (opted in)
     try {
       assertPreconditions({
         repoRoot: emptyRepo,
@@ -422,7 +510,7 @@ describe.skipIf(!hasEm())("runBridge wiring (no --skip-design-gate)", () => {
 
   it("refuses when a required event has no type declaration anywhere in the consumer tree", () => {
     const componentDir = buildComponentDir({ withTypespec: true });
-    const repoRoot = mkTmp("bridge-wiring-repo-"); // no .kt/.ts files at all
+    const repoRoot = mkEventsFirstRepo("bridge-wiring-repo-"); // opted in; no .kt/.ts files at all
     seedSpeckitScaffold(repoRoot);
     expect(() =>
       runBridge(["record-ping", "--repo-root", repoRoot, "--model", path.join(componentDir, "model.em")])
