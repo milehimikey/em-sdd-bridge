@@ -66,7 +66,7 @@
  * a slice that is not ready-to-implement is refused.
  */
 
-import { readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertMinimumEmVersion } from "./lib/check-em-version.js";
@@ -79,7 +79,7 @@ import { validateSliceKeys } from "./lib/pattern-validate.js";
 import { locateSliceDoc } from "./lib/locate-slice-doc.js";
 import { parseSliceDoc } from "./lib/slice-doc.js";
 import { assertSliceReady } from "./lib/slice-readiness.js";
-import { allocateFeature } from "./lib/allocate-feature.js";
+import { allocateFeature, assertNoExistingFeature } from "./lib/allocate-feature.js";
 import { buildSpecMarkdown, buildTraceabilityLine } from "./lib/spec-builder.js";
 import { assertPreconditions } from "./lib/preconditions.js";
 import { BridgeError } from "./lib/bridge-error.js";
@@ -97,7 +97,7 @@ export const USAGE = [
   "Options:",
   "  --repo-root <path>      spec-kit project root (default: nearest ancestor with .specify/)",
   "  --model <path.em>       path to the .em model",
-  "  --slices-dir <dir>      accepted for compatibility; currently has no effect",
+  "  --slices-dir <dir>      deprecated: has no effect, will be removed",
   "  --doc <path>            explicit slice-doc path (relative to the model dir)",
   "  --symlink               link spec.md to the slice doc instead of rendering it (POSIX only)",
   "  --dry-run               allocate and render nothing on disk; print what would happen",
@@ -129,6 +129,12 @@ export function infoFlagOutput(argv: string[]): string | null {
   return null;
 }
 
+/** realpath when the path exists; otherwise returned unchanged so the
+ *  downstream check that owns "missing" reports it. */
+function physicalPath(p: string): string {
+  return existsSync(p) ? realpathSync(p) : p;
+}
+
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -158,15 +164,28 @@ export function runBridge(argv: string[]): BridgeResult {
     ["--dry-run", "--skip-design-gate", "--skip-readiness-gate", "--symlink"]
   );
 
+  // --slices-dir never had an effect (#21); warn rather than refuse so
+  // existing invocations keep working until it is removed.
+  if (flags["slices-dir"] !== undefined) {
+    console.error("bridge: WARNING --slices-dir is deprecated and has no effect; it will be removed in a future release.");
+  }
+
   const keys = positional;
   if (keys.length < 1) {
     throw new BridgeError(USAGE);
   }
 
-  const repoRoot = flags["repo-root"] ?? findRepoRoot(process.cwd());
-  if (!repoRoot) {
+  const givenRepoRoot = flags["repo-root"] ?? findRepoRoot(process.cwd());
+  if (!givenRepoRoot) {
     throw new BridgeError("Could not locate a spec-kit project (no .specify/ directory found upward from cwd).");
   }
+  // Physical paths from here on (#19). The allocation scripts report the
+  // physical spec path (pwd -P), so a repo root or model path spelled through
+  // a symlink (macOS /var -> /private/var, a symlinked home) would make every
+  // path.relative() between the two climb to / and back down -- a "relative"
+  // --symlink target that resolves into the original checkout from a
+  // worktree or clone.
+  const repoRoot = physicalPath(givenRepoRoot);
 
   // Constitution advisory (MIL-203): warn, never gate, when
   // .specify/memory/constitution.md exists and is still spec-kit's unfilled
@@ -182,7 +201,7 @@ export function runBridge(argv: string[]): BridgeResult {
   // See lib/check-speckit-scaffold.ts (MIL-150).
   assertSpeckitScaffoldCompat(repoRoot);
 
-  const modelPath = resolveModelPath(repoRoot, flags["model"]);
+  const modelPath = physicalPath(resolveModelPath(repoRoot, flags["model"]));
   const exportModel = runEmExport(modelPath);
 
   const { primary } = validateSliceKeys(exportModel, keys);
@@ -235,6 +254,10 @@ export function runBridge(argv: string[]): BridgeResult {
   const shortName = primary.key;
   const description = primaryDoc.intent || primaryDoc.name;
   const dryRun = booleans.has("dry-run");
+
+  // Refuse a second feature for the same slice (#20): re-running would
+  // otherwise allocate the next number and move HEAD to a duplicate branch.
+  assertNoExistingFeature(repoRoot, shortName);
 
   const allocated = allocateFeature({ repoRoot, shortName, description, dryRun });
 

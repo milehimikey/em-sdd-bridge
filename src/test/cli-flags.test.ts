@@ -164,3 +164,24 @@ describe.skipIf(!hasEm())("--skip-readiness-gate (#15)", () => {
     expect(errorSpy.mock.calls.map((c) => String(c[0])).join("\n")).not.toMatch(/skip-readiness-gate/);
   });
 });
+
+describe.skipIf(!hasEm())("--slices-dir deprecation (#21)", () => {
+  it("warns that the flag is deprecated and has no effect, then runs as normal", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { repo, modelPath } = buildScratchRepoWithModel();
+    runBridge([
+      "record-ping",
+      "--repo-root",
+      repo,
+      "--model",
+      modelPath,
+      "--slices-dir",
+      "elsewhere",
+      "--skip-design-gate",
+      "--skip-readiness-gate",
+      "--dry-run",
+    ]);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/WARNING --slices-dir is deprecated/));
+    errorSpy.mockRestore();
+  });
+});

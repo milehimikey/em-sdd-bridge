@@ -68,7 +68,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { BridgeError } from "./bridge-error.js";
 import { cleanGitEnv } from "./clean-git-env.js";
@@ -204,6 +204,27 @@ function allocateWithGitExtension(opts: AllocateFeatureOptions, extensionScript:
   }
 
   return { branchName: feature.BRANCH_NAME, specFile: feature.SPEC_FILE, featureNum: feature.FEATURE_NUM };
+}
+
+/**
+ * Fail-closed guard against bridging the same slice twice (#20). A feature
+ * for a slice is a `specs/NNN-<slice-key>/` dir (the core script names spec
+ * dirs `{number}-{short-name}`, and the bridge passes the slice key as the
+ * short name). Re-running would otherwise allocate the next number, create a
+ * duplicate branch and move HEAD to it.
+ */
+export function assertNoExistingFeature(repoRoot: string, shortName: string): void {
+  const specsDir = path.join(repoRoot, "specs");
+  if (!existsSync(specsDir)) return;
+  const pattern = new RegExp(`^\\d+-${shortName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+  const existing = readdirSync(specsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && pattern.test(e.name))
+    .map((e) => path.join("specs", e.name));
+  if (existing.length === 0) return;
+  throw new BridgeError(
+    `Slice "${shortName}" already has a spec-kit feature: ${existing.join(", ")}. ` +
+      `Continue on that feature's branch, or delete the spec dir (and its branch) to bridge it again.`
+  );
 }
 
 export function allocateFeature(opts: AllocateFeatureOptions): AllocatedFeature {

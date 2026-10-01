@@ -227,14 +227,10 @@ describe.skipIf(!hasEm())("--symlink mode (redirection: spec.md is a link to the
       expect(readFileSync(specFile, "utf8")).toBe(readFileSync(sliceDoc, "utf8"));
     });
 
-    // GAP: when --repo-root is reached through a symlinked path (macOS /tmp and
-    // /var, or a symlinked home/workspace), the allocation scripts report the
-    // physical spec path while the slice doc path stays as given, so
-    // path.relative() climbs to / and back down through the *main checkout's*
-    // absolute path. The link is "relative" but not portable: in a worktree or
-    // clone it silently resolves back into the original tree. Flip to a plain
-    // `it` once bridge.ts realpaths both sides.
-    it.fails("repo-root given via a symlinked path: link target stays repo-relative (GAP)", () => {
+    // #19: --repo-root reached through a symlinked path (macOS /tmp and /var,
+    // a symlinked home) must still produce a repo-relative link, not one that
+    // climbs to / and back into the original checkout.
+    it("repo-root given via a symlinked path: link target stays repo-relative (#19)", () => {
       const { repo } = buildResolved(nested);
       const aliasParent = mkdtempSync(path.join(tmpdir(), "bridge-symlink-alias-"));
       scratchDirs.push(aliasParent);
@@ -316,35 +312,17 @@ describe.skipIf(!hasEm())("--symlink mode (redirection: spec.md is a link to the
       }
     });
 
-    it("re-run for the same slice: first feature's link is neither clobbered nor broken", () => {
+    it("re-run for the same slice: refuses, and the first feature's link is untouched (#20)", () => {
       const { repo, modelPath } = buildResolved(nested);
       const first = linkSlice(repo, modelPath);
       const firstTarget = readlinkSync(first.specFile!);
       const sliceDoc = path.join(repo, nested, "slices", "record-ping.md");
 
-      // Observed behaviour (recorded, not prescribed): the bridge does not
-      // detect the existing feature; it allocates a NEW number and links that.
-      // If this starts throwing instead, that is also a non-clobbering outcome.
-      let second: ReturnType<typeof linkSlice> | undefined;
-      let error: unknown;
-      try {
-        second = linkSlice(repo, modelPath);
-      } catch (e) {
-        error = e;
-      }
+      expect(() => linkSlice(repo, modelPath)).toThrow(/already has a spec-kit feature: specs\/001-record-ping/);
 
-      expect(lstatSync(first.specFile!).isSymbolicLink()).toBe(true);
+      expect(git(["rev-parse", "--abbrev-ref", "HEAD"], repo)).toBe(first.branchName);
       expect(readlinkSync(first.specFile!)).toBe(firstTarget);
       expect(realpathSync(first.specFile!)).toBe(realpathSync(sliceDoc));
-
-      if (second) {
-        expect(second.branchName).not.toBe(first.branchName);
-        expect(second.specFile).not.toBe(first.specFile);
-        expect(lstatSync(second.specFile!).isSymbolicLink()).toBe(true);
-        expect(realpathSync(second.specFile!)).toBe(realpathSync(sliceDoc));
-      } else {
-        expect(error).toBeDefined();
-      }
     });
   });
 });

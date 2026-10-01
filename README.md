@@ -58,6 +58,12 @@ prefix (followed by `-`) of exactly one key; the resolved key is logged to
 stderr. Ambiguous or unknown keys fail with the candidate or nearest keys
 listed (#17).
 
+One slice, one feature: if `specs/NNN-<slice-key>/` already exists, the
+bridge refuses rather than allocating a duplicate feature and branch.
+Continue on the existing feature's branch, or delete its spec dir (and
+branch) to bridge the slice again (#20). `--slices-dir` is deprecated: it
+never had an effect, now prints a warning, and will be removed (#21).
+
 ### `--skip-readiness-gate`: building ahead of ratification
 
 By default the bridge refuses any slice that `em validate --slice-ready`
