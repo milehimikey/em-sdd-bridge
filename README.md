@@ -32,6 +32,10 @@ resolving a non-matching bin out of a package npx hasn't already installed):
 ```sh
 npm install --save-dev em-sdd-bridge
 npx em-sdd-bridge <slice-key> [--dry-run]
+
+# Full usage / installed version (work without em, outside a repo).
+npx em-sdd-bridge --help
+npx em-sdd-bridge --version
 npx em-sdd-mark-implemented <slice-key> <pr-url>
 ```
 
@@ -47,6 +51,29 @@ npx em-sdd-bridge <slice-key> [--dry-run]
 # needed when running this specific entry point as a one-off, uninstalled.)
 npx em-sdd-mark-implemented <slice-key> <pr-url>
 ```
+
+Slice keys are the `em export` keys (e.g. `abc-0039-finalize-invoice`). A
+display form such as `ABC-0039` also works when it is a case-insensitive
+prefix (followed by `-`) of exactly one key; the resolved key is logged to
+stderr. Ambiguous or unknown keys fail with the candidate or nearest keys
+listed (#17).
+
+One slice, one feature: if `specs/NNN-<slice-key>/` already exists, the
+bridge refuses rather than allocating a duplicate feature and branch.
+Continue on the existing feature's branch, or delete its spec dir (and
+branch) to bridge the slice again (#20). `--slices-dir` is deprecated: it
+never had an effect, now prints a warning, and will be removed (#21).
+
+### `--skip-readiness-gate`: building ahead of ratification
+
+By default the bridge refuses any slice that `em validate --slice-ready`
+does not report as ready-to-implement. Pass `--skip-readiness-gate` to build
+ahead of ratification (e.g. a `draft` slice with recorded build
+assumptions). This is a supported path, not a test hook: the bridge prints a
+loud warning that the slice is not ratified and the gate was bypassed by
+explicit choice. It bypasses only the readiness gate; the
+design-completeness and (when enabled) events-first checks still run unless
+`--skip-design-gate` is also given (#15).
 
 **Native, as of 0.4.0: `em-sdd-mark-implemented` is a thin wrapper.** It no
 longer edits a slice doc itself at all. It resolves the `.em` model to use
@@ -74,7 +101,7 @@ npx em-sdd-bridge <slice-key> --symlink [--dry-run]
 The default mode above *emits*: it renders the slice into spec-kit's spec.md
 format. `--symlink` *redirects* instead: allocation runs exactly the same
 (branch + `specs/NNN-slug/` dir, same gates -- minimum `em` version, slice
-readiness, pattern validation, design-completeness/events-first), but the
+readiness, pattern validation, design-completeness/events-first when enabled), but the
 template-copied `spec.md` is replaced with a **relative symlink to the
 ratified slice doc itself**. No spec content is generated, because none is
 needed: spec-kit's phase consumers are prompts, not parsers -- they read
@@ -233,7 +260,8 @@ fail-closed:
   `.specify/em-sdd.json` below), `typespec/main.tsp` must exist and
   `npx tsp compile main.tsp --no-emit` must exit 0. An unavailable TypeSpec
   compiler is itself a failure, never a silent skip.
-- **Events-first**: every event the slice(s) emit or consume must already
+- **Events-first** (opt-in, off by default as of 0.6.0 -- see
+  `eventsFirst` below): every event the slice(s) emit or consume must already
   exist as a real type declaration (`class`, `data class`, `record`,
   `interface`, `object`, or TS `type X =`) somewhere in the consumer's
   `.kt`/`.java`/`.ts`/`.tsx` source tree -- TypeSpec models, Avro schemas,
@@ -241,34 +269,42 @@ fail-closed:
   never creates, offers to create, or scaffolds a missing event** -- a
   failure here always means "author the event as real code first."
 
-Every failure from both checks is collected and thrown together in one
+Every failure from the enabled checks is collected and thrown together in one
 `BridgeError`, never reported piecemeal.
 
-`--skip-design-gate` bypasses both checks entirely and prints a loud warning.
+`--skip-design-gate` bypasses design-completeness and (when enabled) events-first entirely and prints a loud warning.
 It exists ONLY so this package's own test suite can exercise bridge mechanics
 (allocation, spec rendering) independent of whether a real events-first
 source tree or a TypeSpec compiler is available in the environment running
 the tests. **Never use it for a real slice implementation.**
 
-### `.specify/em-sdd.json`: declaring the repo's contract source
-
-The TypeSpec checks encode one convention (contracts generated from
-`typespec/main.tsp` in the component dir). Repos that satisfy events-first
-some other way -- e.g. hand-authored event classes in the source tree, which
-the events-first check verifies independently -- declare that as
-repo-committed policy:
+### `.specify/em-sdd.json`: contract source and events-first policy
 
 ```json
-{ "contractSource": "none" }
+{ "contractSource": "typespec", "eventsFirst": false }
 ```
 
-at `.specify/em-sdd.json` (relative to `--repo-root`). Only the two TypeSpec
-checks are skipped; every other check in both gates still runs. When the
+at `.specify/em-sdd.json` (relative to `--repo-root`):
+
+- `contractSource` (`"typespec"` default | `"none"`): the TypeSpec checks
+  encode one convention (contracts generated from `typespec/main.tsp` in the
+  component dir). `"none"` skips only those two TypeSpec checks; every other
+  design-completeness check still runs.
+- `eventsFirst` (boolean, **default `false`**): when `true`, every event a
+  slice emits or consumes must already exist as a real type declaration
+  before the bridge generates a spec (#13).
+
+**Events-first trade-off.** It gives determinism to teams that practice
+contract-first design or reverse-document already-built code: the types are
+proven to exist before a spec is written. It also inverts the usual
+spec -> plan -> tasks -> implement order, because the event type is normally
+written during implementation. Leave it off unless your team declares event
+types before specifying them. It is independent of `contractSource`. When the
 file is absent, the default is `"typespec"` -- existing consumers keep the
 full gate untouched. This is deliberately a committed file, not a CLI flag:
 which convention a repo follows is repo policy decided in review, not a
-per-invocation choice an autonomous agent could quietly vary. Malformed JSON
-or an unknown value is a gate **failure**, never a silent fallback.
+per-invocation choice an autonomous agent could quietly vary. Malformed JSON,
+an unknown `contractSource`, or a non-boolean `eventsFirst` is a gate **failure**, never a silent fallback.
 
 ### Slice-doc metadata: sourced from `em export`, not parsed here
 
@@ -305,7 +341,7 @@ can change it freely. One gate implementation (em's), not two.
 
 ### `infrastructure-context.md`: a configurable narrowing hint
 
-The events-first check narrows its search for a required event's type
+When enabled, the events-first check narrows its search for a required event's type
 declaration by reading `.specify/memory/infrastructure-context.md` (relative
 to `--repo-root`): if a line in that file mentions the event name alongside a
 path-shaped token, that path is tried FIRST before falling back to a full

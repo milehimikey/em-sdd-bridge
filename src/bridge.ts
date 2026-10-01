@@ -5,7 +5,9 @@
  * Usage:
  *   npx em-sdd-bridge <slice-key>
  *     [--repo-root <path>] [--model <path.em>] [--slices-dir <dir>]
- *     [--symlink] [--dry-run] [--skip-design-gate]
+ *     [--doc <path>] [--symlink] [--dry-run]
+ *     [--skip-design-gate] [--skip-readiness-gate]
+ *   npx em-sdd-bridge --help | -h | --version | -v
  *
  * One slice key per invocation. As of the merged Automation/Translation
  * reaction shape (`em` >=1.7.1, MIL-120), a reaction, the command it
@@ -19,7 +21,7 @@
  * spec-kit scaffold flag-compatibility check (lib/check-speckit-scaffold.ts,
  * MIL-150 -- fails closed if the installed scaffold's scripts don't support
  * the flags below) -> em export -> validate the slice key (from export's
- * slice.pattern) -> the design-completeness / events-first preconditions ->
+ * slice.pattern) -> the design-completeness / events-first (opt-in, #13) preconditions ->
  * readiness gate (delegated to `em validate --slice-ready`,
  * lib/slice-readiness.ts) -> locate + parse the slice doc's body content ->
  * allocate the spec-kit feature (git branch, created + checked out, via the
@@ -46,7 +48,7 @@
  *
  * Never calls /speckit.specify -- spec.md is written directly (or linked).
  *
- * --skip-design-gate bypasses the design-completeness / events-first
+ * --skip-design-gate bypasses the design-completeness / events-first (when enabled)
  * preconditions (lib/preconditions.ts) entirely and prints a loud warning
  * when used. This exists ONLY to let this package's own test suite exercise
  * bridge mechanics (allocation, spec rendering) independent of whether a
@@ -55,9 +57,16 @@
  * a real slice implementation: doing so re-opens exactly the "an autonomous
  * agent walks past a warning" gap the design-completeness gate exists to
  * close.
+ *
+ * --skip-readiness-gate (#15) bypasses ONLY the readiness gate
+ * (`em validate --slice-ready`), independent of --skip-design-gate, and
+ * prints a loud warning. Unlike --skip-design-gate this is a supported
+ * production path: it is for teams building ahead of ratification (e.g. a
+ * `draft` slice with recorded build assumptions). The default is unchanged --
+ * a slice that is not ready-to-implement is refused.
  */
 
-import { readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertMinimumEmVersion } from "./lib/check-em-version.js";
@@ -70,11 +79,61 @@ import { validateSliceKeys } from "./lib/pattern-validate.js";
 import { locateSliceDoc } from "./lib/locate-slice-doc.js";
 import { parseSliceDoc } from "./lib/slice-doc.js";
 import { assertSliceReady } from "./lib/slice-readiness.js";
-import { allocateFeature } from "./lib/allocate-feature.js";
+import { allocateFeature, assertNoExistingFeature } from "./lib/allocate-feature.js";
 import { buildSpecMarkdown, buildTraceabilityLine } from "./lib/spec-builder.js";
 import { assertPreconditions } from "./lib/preconditions.js";
 import { BridgeError } from "./lib/bridge-error.js";
 import type { ExportedSlice } from "./lib/export-model.js";
+
+/** Usage text for --help/-h and for the no-slice-key error (#16). Single
+ *  source so the two never drift. */
+const VALUE_FLAGS = ["--repo-root", "--model", "--slices-dir", "--doc"];
+
+export const USAGE = [
+  "Usage: em-sdd-bridge <slice-key> [options]",
+  "",
+  "Bridge one ratified em slice into a spec-kit feature (branch + spec dir + spec.md).",
+  "",
+  "Options:",
+  "  --repo-root <path>      spec-kit project root (default: nearest ancestor with .specify/)",
+  "  --model <path.em>       path to the .em model",
+  "  --slices-dir <dir>      deprecated: has no effect, will be removed",
+  "  --doc <path>            explicit slice-doc path (relative to the model dir)",
+  "  --symlink               link spec.md to the slice doc instead of rendering it (POSIX only)",
+  "  --dry-run               allocate and render nothing on disk; print what would happen",
+  "  --skip-design-gate      bypass design-completeness and (when enabled) events-first checks (test use only)",
+  "  --skip-readiness-gate   build a slice that is not ready-to-implement; prints a warning",
+  "  -h, --help              print this usage and exit",
+  "  -v, --version           print the package version and exit",
+].join("\n");
+
+/** The package version, read from package.json relative to this module. The
+ *  same relative path (`../package.json`) works from src/ (tsx) and dist/. */
+export function readPackageVersion(): string {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+    version: string;
+  };
+  return pkg.version;
+}
+
+/** --help/-h and --version/-v. Returns the text to print (exit 0), or null
+ *  when argv asks for neither. Pure of side effects and deliberately free of
+ *  the em-version check and repo-root discovery, so both work with no `em`
+ *  installed and outside any repo. Help wins if both are given. */
+export function infoFlagOutput(argv: string[]): string | null {
+  // Skip the value of each value flag, so e.g. `--doc -h` is a doc path,
+  // not a help request.
+  const switches = argv.filter((arg, i) => !VALUE_FLAGS.includes(argv[i - 1]));
+  if (switches.includes("--help") || switches.includes("-h")) return USAGE;
+  if (switches.includes("--version") || switches.includes("-v")) return readPackageVersion();
+  return null;
+}
+
+/** realpath when the path exists; otherwise returned unchanged so the
+ *  downstream check that owns "missing" reports it. */
+function physicalPath(p: string): string {
+  return existsSync(p) ? realpathSync(p) : p;
+}
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -101,21 +160,32 @@ export function runBridge(argv: string[]): BridgeResult {
 
   const { positional, flags, booleans } = parseArgs(
     argv,
-    ["--repo-root", "--model", "--slices-dir", "--doc"],
-    ["--dry-run", "--skip-design-gate", "--symlink"]
+    VALUE_FLAGS,
+    ["--dry-run", "--skip-design-gate", "--skip-readiness-gate", "--symlink"]
   );
+
+  // --slices-dir never had an effect (#21); warn rather than refuse so
+  // existing invocations keep working until it is removed.
+  if (flags["slices-dir"] !== undefined) {
+    console.error("bridge: WARNING --slices-dir is deprecated and has no effect; it will be removed in a future release.");
+  }
 
   const keys = positional;
   if (keys.length < 1) {
-    throw new BridgeError(
-      "Usage: bridge.ts <slice-key> [--repo-root <path>] [--model <path>] [--dry-run] [--skip-design-gate]"
-    );
+    throw new BridgeError(USAGE);
   }
 
-  const repoRoot = flags["repo-root"] ?? findRepoRoot(process.cwd());
-  if (!repoRoot) {
+  const givenRepoRoot = flags["repo-root"] ?? findRepoRoot(process.cwd());
+  if (!givenRepoRoot) {
     throw new BridgeError("Could not locate a spec-kit project (no .specify/ directory found upward from cwd).");
   }
+  // Physical paths from here on (#19). The allocation scripts report the
+  // physical spec path (pwd -P), so a repo root or model path spelled through
+  // a symlink (macOS /var -> /private/var, a symlinked home) would make every
+  // path.relative() between the two climb to / and back down -- a "relative"
+  // --symlink target that resolves into the original checkout from a
+  // worktree or clone.
+  const repoRoot = physicalPath(givenRepoRoot);
 
   // Constitution advisory (MIL-203): warn, never gate, when
   // .specify/memory/constitution.md exists and is still spec-kit's unfilled
@@ -131,7 +201,7 @@ export function runBridge(argv: string[]): BridgeResult {
   // See lib/check-speckit-scaffold.ts (MIL-150).
   assertSpeckitScaffoldCompat(repoRoot);
 
-  const modelPath = resolveModelPath(repoRoot, flags["model"]);
+  const modelPath = physicalPath(resolveModelPath(repoRoot, flags["model"]));
   const exportModel = runEmExport(modelPath);
 
   const { primary } = validateSliceKeys(exportModel, keys);
@@ -153,14 +223,24 @@ export function runBridge(argv: string[]): BridgeResult {
   // since it's a single cheap subprocess call, independent of file
   // location, and fails fast on the most common "not actually ready yet"
   // case before the more expensive checks below run.
-  assertSliceReady(modelPath, primary.key);
+  // --skip-readiness-gate (#15) bypasses only this gate; the design gate
+  // below is independent and keeps its own flag.
+  if (booleans.has("skip-readiness-gate")) {
+    console.error(
+      "bridge: WARNING --skip-readiness-gate is set -- this slice is NOT ratified " +
+        "(not confirmed ready-to-implement); the readiness gate was bypassed by explicit choice. " +
+        "Anything built from it may change when the slice is ratified."
+    );
+  } else {
+    assertSliceReady(modelPath, primary.key);
+  }
 
   // Design-completeness + events-first preconditions, run BEFORE feature
   // allocation and fail-closed. See lib/preconditions.ts.
   if (booleans.has("skip-design-gate")) {
     console.error(
       "bridge: WARNING --skip-design-gate is set -- bypassing the design-completeness " +
-        "gate and the events-first prerequisite entirely. This must never be used for a real slice " +
+        "gate and the events-first prerequisite (when enabled) entirely. This must never be used for a real slice " +
         "implementation; it exists only for this package's own tests."
     );
   } else {
@@ -174,6 +254,10 @@ export function runBridge(argv: string[]): BridgeResult {
   const shortName = primary.key;
   const description = primaryDoc.intent || primaryDoc.name;
   const dryRun = booleans.has("dry-run");
+
+  // Refuse a second feature for the same slice (#20): re-running would
+  // otherwise allocate the next number and move HEAD to a duplicate branch.
+  assertNoExistingFeature(repoRoot, shortName);
 
   const allocated = allocateFeature({ repoRoot, shortName, description, dryRun });
 
@@ -256,6 +340,13 @@ export function runBridge(argv: string[]): BridgeResult {
 const isMain =
   !!process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
 if (isMain) {
+  // Handled before runBridge (and so before assertMinimumEmVersion and
+  // repo-root discovery) so they work with no `em` and outside a repo.
+  const info = infoFlagOutput(process.argv.slice(2));
+  if (info !== null) {
+    console.log(info);
+    process.exit(0);
+  }
   try {
     const result = runBridge(process.argv.slice(2));
     if (result.mode === "symlink") {

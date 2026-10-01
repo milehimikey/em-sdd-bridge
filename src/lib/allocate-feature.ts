@@ -6,7 +6,10 @@
  *
  *   - `.specify/scripts/bash/create-new-feature.sh` (core, always installed)
  *     allocates the `specs/NNN-slug/` dir + `spec.md` + `.specify/feature.json`.
- *     It does NOT touch git at all -- no branch, no checkout.
+ *     Two scaffold shapes exist (#14): the pinned fixture core does NOT touch
+ *     git at all, but a stock/current scaffold's core may ALSO create and check
+ *     out the `NNN-slug` branch itself (`git checkout -q -b "$BRANCH_NAME"`),
+ *     whether or not the git extension is installed.
  *   - `.specify/extensions/git/scripts/bash/create-new-feature-branch.sh`
  *     (optional git extension) allocates + creates + checks out the `NNN-slug`
  *     git branch. It does NOT touch `specs/` or `.specify/feature.json`.
@@ -30,6 +33,16 @@
  * calls), it silently bumps to the next free number instead of failing --
  * which would silently detach the spec dir from the branch the extension
  * already created and checked out. This module fails loudly instead.
+ *
+ * Git-capable core (#14): when the extension has already created the branch and
+ * the core script also tries to create it, the core fails with "Branch '...'
+ * already exists". The core's `--allow-existing-branch` makes it switch to the
+ * existing branch instead, so it is passed on the second call -- but ONLY when
+ * `coreScriptCreatesGitBranch()` statically finds branch creation in the core
+ * source. It is conditional because in the pinned core the same flag means
+ * "reuse an existing feature DIR" and also disables the number bump-on-collision
+ * (see fixtures/speckit-scripts create-new-feature.sh, ~L296): passing it
+ * unconditionally would hide exactly the race the mismatch check below guards.
  *
  * When the git extension is absent, this module falls back to the original
  * core-script-only behavior (no branch is created; only the spec dir/number
@@ -55,7 +68,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { BridgeError } from "./bridge-error.js";
 import { cleanGitEnv } from "./clean-git-env.js";
@@ -122,6 +135,31 @@ export function gitExtensionBranchScriptPath(repoRoot: string): string | undefin
   return undefined;
 }
 
+/**
+ * Statically probes a core `create-new-feature.sh` source for git branch
+ * creation (`git checkout -b`, `git switch -c`, or `git branch <name>`), so
+ * `allocateWithGitExtension()` knows whether the core would collide with the
+ * branch the extension already created (#14). Comment lines are ignored.
+ * Exported for direct testing. Returns false if the file cannot be read.
+ */
+export function coreScriptCreatesGitBranch(scriptPath: string): boolean {
+  let source: string;
+  try {
+    source = readFileSync(scriptPath, "utf8");
+  } catch {
+    return false;
+  }
+  const code = source
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+  return (
+    /\bgit\s+(?:-\S+\s+)*checkout\b[^\n]*?\s-[a-zA-Z]*[bB]\b/.test(code) ||
+    /\bgit\s+(?:-\S+\s+)*switch\b[^\n]*?(?:\s-[a-zA-Z]*[cC]\b|\s--(?:force-)?create\b)/.test(code) ||
+    /\bgit\s+(?:-\S+\s+)*branch\s+(?!-)[^\s]/.test(code)
+  );
+}
+
 function allocateCoreOnly(opts: AllocateFeatureOptions): AllocatedFeature {
   const args = ["--json", "--short-name", opts.shortName];
   if (opts.dryRun) args.push("--dry-run");
@@ -143,8 +181,13 @@ function allocateWithGitExtension(opts: AllocateFeatureOptions, extensionScript:
   // (zero-padded) value the extension emitted.
   const featureArgs = ["--json", "--short-name", opts.shortName, "--number", branch.FEATURE_NUM];
   if (opts.dryRun) featureArgs.push("--dry-run");
+  // A git-capable core would otherwise fail "Branch ... already exists" on the
+  // branch the extension just created; the flag makes it switch to it (#14).
+  // Conditional: in a git-free core it would instead disable number bumping.
+  const coreScript = coreScriptPath(opts.repoRoot);
+  if (coreScriptCreatesGitBranch(coreScript)) featureArgs.push("--allow-existing-branch");
   featureArgs.push(opts.description);
-  const feature = runJsonScript<CoreFeatureResult>(coreScriptPath(opts.repoRoot), featureArgs, opts.repoRoot);
+  const feature = runJsonScript<CoreFeatureResult>(coreScript, featureArgs, opts.repoRoot);
 
   if (feature.BRANCH_NAME !== branch.BRANCH_NAME) {
     throw new BridgeError(
@@ -161,6 +204,27 @@ function allocateWithGitExtension(opts: AllocateFeatureOptions, extensionScript:
   }
 
   return { branchName: feature.BRANCH_NAME, specFile: feature.SPEC_FILE, featureNum: feature.FEATURE_NUM };
+}
+
+/**
+ * Fail-closed guard against bridging the same slice twice (#20). A feature
+ * for a slice is a `specs/NNN-<slice-key>/` dir (the core script names spec
+ * dirs `{number}-{short-name}`, and the bridge passes the slice key as the
+ * short name). Re-running would otherwise allocate the next number, create a
+ * duplicate branch and move HEAD to it.
+ */
+export function assertNoExistingFeature(repoRoot: string, shortName: string): void {
+  const specsDir = path.join(repoRoot, "specs");
+  if (!existsSync(specsDir)) return;
+  const pattern = new RegExp(`^\\d+-${shortName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+  const existing = readdirSync(specsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && pattern.test(e.name))
+    .map((e) => path.join("specs", e.name));
+  if (existing.length === 0) return;
+  throw new BridgeError(
+    `Slice "${shortName}" already has a spec-kit feature: ${existing.join(", ")}. ` +
+      `Continue on that feature's branch, or delete the spec dir (and its branch) to bridge it again.`
+  );
 }
 
 export function allocateFeature(opts: AllocateFeatureOptions): AllocatedFeature {

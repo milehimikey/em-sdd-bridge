@@ -44,10 +44,57 @@ export function validateSliceKeys(model: ExportedModel, keys: string[]): Validat
   }
 
   const [key] = keys;
-  const slice = findSliceByKey(model, key);
-  if (!slice) {
-    throw new BridgeError(`Slice key "${key}" not found in \`em export\` output.`);
+  return { primary: resolveSliceKey(model, key) };
+}
+
+const MAX_SUGGESTIONS = 5;
+
+/**
+ * Resolve the user-supplied key to an exported slice (#17). Exact export-key
+ * match wins. Otherwise the input is treated as a display-name form
+ * (`ABC-0039`): a case-insensitive prefix followed by `-` of exactly one
+ * export key (`abc-0039-finalize-invoice`) resolves, and the resolution is
+ * logged to stderr so it is never silent. Several matches refuse, listing the
+ * candidates; no match refuses with up to five nearby keys. Fail closed: the
+ * bridge never guesses between candidates.
+ */
+function resolveSliceKey(model: ExportedModel, input: string): ExportedSlice {
+  const exact = findSliceByKey(model, input);
+  if (exact) return exact;
+
+  const slices = model.model.slices;
+  const needle = input.toLowerCase();
+
+  const matches = slices.filter((s) => {
+    const k = s.key.toLowerCase();
+    return k === needle || k.startsWith(needle.endsWith("-") ? needle : `${needle}-`);
+  });
+
+  if (matches.length === 1) {
+    console.error(`bridge: resolved slice key "${input}" -> "${matches[0].key}"`);
+    return matches[0];
+  }
+  if (matches.length > 1) {
+    throw new BridgeError(
+      `Slice key "${input}" is ambiguous: it matches ${matches.length} slices in \`em export\` output. ` +
+        `Pass one of the full keys: ${matches.map((s) => s.key).join(", ")}.`
+    );
   }
 
-  return { primary: slice };
+  const near = slices
+    .filter((s) => {
+      const k = s.key.toLowerCase();
+      return needle.length > 0 && (k.includes(needle) || needle.includes(k));
+    })
+    .map((s) => s.key)
+    .slice(0, MAX_SUGGESTIONS);
+  const hint =
+    near.length > 0
+      ? ` Did you mean: ${near.join(", ")}?`
+      : slices.length > 0
+        ? ` Available keys: ${slices.slice(0, MAX_SUGGESTIONS).map((s) => s.key).join(", ")}${
+            slices.length > MAX_SUGGESTIONS ? ", ..." : ""
+          }.`
+        : "";
+  throw new BridgeError(`Slice key "${input}" not found in \`em export\` output.${hint}`);
 }
