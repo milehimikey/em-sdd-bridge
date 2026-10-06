@@ -104,3 +104,27 @@ describe("sectionAliases (#24)", () => {
     expect(typeof parseSectionAliases({ nope: ["x"] })).toBe("string");
   });
 });
+
+describe("tspCommand (#25)", () => {
+  it("absent -> undefined (resolve automatically), no failure", () => {
+    writeConfig("{}");
+    const config = readBridgeConfig(repoRoot);
+    expect(config.tspCommand).toBeUndefined();
+    expect(config.tspCommandFailure).toBeUndefined();
+  });
+
+  it("reads an argv array and trims each element", () => {
+    writeConfig(JSON.stringify({ tspCommand: ["mise", " exec", "--", "tsp "] }));
+    expect(readBridgeConfig(repoRoot).tspCommand).toEqual(["mise", "exec", "--", "tsp"]);
+  });
+
+  it.each([["mise exec -- tsp"], [[]], [["tsp", ""]], [["tsp", 1]], [null], [{ cmd: "tsp" }]])(
+    "rejects malformed value %j (fail-closed)",
+    (value) => {
+      writeConfig(JSON.stringify({ tspCommand: value }));
+      const config = readBridgeConfig(repoRoot);
+      expect(config.tspCommandFailure).toMatch(/invalid "tspCommand" value .* -- expected a non-empty array of non-empty strings/);
+      expect(config.tspCommand).toBeUndefined();
+    }
+  );
+});

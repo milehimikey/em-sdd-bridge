@@ -30,12 +30,12 @@
  * a silent fall back to off.
  */
 
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { BridgeError } from "./bridge-error.js";
 import { readBridgeConfig, type BridgeConfig } from "./bridge-config.js";
 import { locateSliceDoc } from "./locate-slice-doc.js";
+import { resolveTspCommand, runTspCompile } from "./tsp-compiler.js";
 import type { ExportedModel, ExportedSlice } from "./export-model.js";
 
 const SOURCE_EXTENSIONS = [".kt", ".java", ".ts", ".tsx"];
@@ -66,32 +66,17 @@ export interface PreconditionOptions {
   docOverride?: string;
 }
 
-/**
- * Runs `npx --no-install tsp <args>`. Deliberately never lets npx fall
- * through to installing from the registry: there is an unrelated,
- * unmaintained `tsp` package on the public npm registry (verified live
- * against a real environment -- NOT @typespec/compiler's `tsp` binary) that
- * a bare `npx tsp` would silently fetch and try to run instead. `--no-install`
- * makes "the real compiler isn't present locally" fail immediately and
- * deterministically, which is what "fail-closed" requires here regardless of
- * network conditions or npm's registry contents.
- */
-function runTsp(args: string[], cwd: string): void {
-  execFileSync("npx", ["--no-install", "tsp", ...args], { cwd, stdio: "pipe" });
-}
-
 /** Mirrors the existing `hasEm()` test-gating pattern: lets the test suite
  *  skip the typespec-compiles-successfully assertion in environments where
  *  the real @typespec/compiler `tsp` binary isn't installed, without ever
  *  weakening the precondition code itself (see checkDesignCompleteness below,
- *  which always treats an unavailable compiler as a FAIL, never a skip). */
+ *  which always treats an unavailable compiler as a FAIL, never a skip).
+ *  Uses the same resolver as the gate (lib/tsp-compiler.ts) from the current
+ *  directory, with no configured command. */
 export function hasTsp(): boolean {
-  try {
-    runTsp(["--version"], process.cwd());
-    return true;
-  } catch {
-    return false;
-  }
+  const cwd = process.cwd();
+  const resolution = resolveTspCommand({ typespecDir: cwd, repoRoot: cwd });
+  return runTspCompile(resolution, cwd, ["--version"]).ok;
 }
 
 function pascalCase(name: string): string {
@@ -316,12 +301,17 @@ export function checkDesignCompleteness(opts: PreconditionOptions, config?: Brid
   // readBridgeConfig: repos whose contracts aren't TypeSpec-generated (e.g.
   // hand-authored event classes) declare `"contractSource": "none"` in
   // .specify/em-sdd.json (lib/bridge-config.ts) and skip ONLY these two checks.
+  // The compiler is resolved (configured "tspCommand" -> nearest
+  // node_modules/.bin/tsp -> `npx --no-install tsp`) and its failures are
+  // classified (not runnable / library unresolvable / compile errors) by
+  // lib/tsp-compiler.ts (#25).
   const cfg = config ?? readBridgeConfig(opts.repoRoot);
   if (cfg.fileFailure) failures.push(cfg.fileFailure);
   if (cfg.contractSourceFailure) failures.push(cfg.contractSourceFailure);
   // A bad `sectionAliases` would silently reproduce the empty-parse problem
   // it exists to fix (#24), so it is a design-gate failure like the others.
   if (cfg.sectionAliasesFailure) failures.push(cfg.sectionAliasesFailure);
+  if (cfg.tspCommandFailure) failures.push(cfg.tspCommandFailure);
   if (cfg.contractSource === "typespec") {
     const typespecDir = path.join(componentDir, "typespec");
     const mainTsp = path.join(typespecDir, "main.tsp");
@@ -331,13 +321,12 @@ export function checkDesignCompleteness(opts: PreconditionOptions, config?: Brid
           `TypeSpec-generated, declare { "contractSource": "none" } in .specify/em-sdd.json ` +
           `(events-first is configured separately via "eventsFirst").`
       );
-    } else {
-      try {
-        runTsp(["compile", "main.tsp", "--no-emit"], typespecDir);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        failures.push(`\`npx tsp compile main.tsp --no-emit\` failed in ${typespecDir}: ${message}`);
-      }
+    } else if (!cfg.tspCommandFailure) {
+      // (a malformed tspCommand is already reported above; running the
+      // fallback resolver in its place would mask the misconfiguration)
+      const resolution = resolveTspCommand({ typespecDir, repoRoot: opts.repoRoot, configured: cfg.tspCommand });
+      const result = runTspCompile(resolution, typespecDir);
+      if (!result.ok) failures.push(result.message);
     }
   }
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ import {
   checkEventsFirst,
   hasTsp,
 } from "../lib/preconditions.js";
+import { resolveTspCommand, runTspCompile } from "../lib/tsp-compiler.js";
 import { findSliceByKey, type ExportedModel, type ExportedSlice } from "../lib/export-model.js";
 import { runBridge } from "../bridge.js";
 import { BridgeError } from "../lib/bridge-error.js";
@@ -233,7 +234,11 @@ describe("checkDesignCompleteness", () => {
         exportModel,
         slices: [recordPingSlice()],
       });
-      expect(failures.some((f) => /npx tsp compile main\.tsp --no-emit.*failed/.test(f))).toBe(true);
+      const failure = failures.find((f) => /^TypeSpec compiler not runnable:/.test(f));
+      expect(failure).toBeDefined();
+      // Falls back to npx (no tspCommand, no node_modules/.bin/tsp), says so, and names the fix.
+      expect(failure).toMatch(/`npx --no-install tsp compile main\.tsp --no-emit` \(resolved via npx/);
+      expect(failure).toMatch(/set "tspCommand" in \.specify\/em-sdd\.json/);
     });
   });
 
@@ -627,5 +632,196 @@ describe("contractSource configuration (.specify/em-sdd.json)", () => {
       slices: [recordPingSlice()],
     });
     expect(failures.some((f) => /No typespec\/main\.tsp found/.test(f))).toBe(true);
+  });
+});
+
+// #25: the compiler is resolved (tspCommand -> nearest node_modules/.bin/tsp
+// -> npx --no-install) and failures are classified. Driven by the fake
+// compiler at fixtures/fake-tsp/fake-tsp.mjs, so every path runs
+// deterministically whether or not a real `tsp` is installed.
+const fakeTsp = path.join(fixturesDir, "fake-tsp", "fake-tsp.mjs");
+const fakeCommand = (mode: string) => [process.execPath, fakeTsp, `--mode=${mode}`];
+
+function gate(componentDir: string, repoRoot = componentDir): string[] {
+  return checkDesignCompleteness({
+    repoRoot,
+    modelPath: path.join(componentDir, "model.em"),
+    exportModel,
+    slices: [recordPingSlice()],
+  });
+}
+
+describe("TypeSpec compiler resolution and failure classification (#25)", () => {
+  describe("resolveTspCommand", () => {
+    it("a configured tspCommand wins outright", () => {
+      const dir = mkTmp("tsp-resolve-");
+      expect(resolveTspCommand({ typespecDir: dir, repoRoot: dir, configured: ["mise", "exec", "--", "tsp"] })).toEqual({
+        command: ["mise", "exec", "--", "tsp"],
+        source: "config",
+      });
+    });
+
+    it("walks up from the typespec dir to the repo root for node_modules/.bin/tsp", () => {
+      const repo = mkTmp("tsp-resolve-");
+      const typespecDir = path.join(repo, "design", "event-model", "typespec");
+      mkdirSync(typespecDir, { recursive: true });
+      const bin = path.join(repo, "node_modules", ".bin", "tsp");
+      mkdirSync(path.dirname(bin), { recursive: true });
+      writeFileSync(bin, "#!/bin/sh\nexit 0\n");
+      expect(resolveTspCommand({ typespecDir, repoRoot: repo })).toEqual({ command: [bin], source: "local-bin" });
+    });
+
+    it("the nearest install wins (typespec dir's own node_modules before the repo root's)", () => {
+      const repo = mkTmp("tsp-resolve-");
+      const typespecDir = path.join(repo, "typespec");
+      for (const base of [repo, typespecDir]) {
+        mkdirSync(path.join(base, "node_modules", ".bin"), { recursive: true });
+        writeFileSync(path.join(base, "node_modules", ".bin", "tsp"), "");
+      }
+      expect(resolveTspCommand({ typespecDir, repoRoot: repo }).command).toEqual([
+        path.join(typespecDir, "node_modules", ".bin", "tsp"),
+      ]);
+    });
+
+    it("does not look above the repo root", () => {
+      const outer = mkTmp("tsp-resolve-");
+      mkdirSync(path.join(outer, "node_modules", ".bin"), { recursive: true });
+      writeFileSync(path.join(outer, "node_modules", ".bin", "tsp"), "");
+      const repo = path.join(outer, "repo");
+      const typespecDir = path.join(repo, "typespec");
+      mkdirSync(typespecDir, { recursive: true });
+      expect(resolveTspCommand({ typespecDir, repoRoot: repo })).toEqual({
+        command: ["npx", "--no-install", "tsp"],
+        source: "npx",
+      });
+    });
+  });
+
+  describe("runTspCompile classification", () => {
+    const dir = () => mkTmp("tsp-run-");
+
+    it("ok: a clean exit passes", () => {
+      expect(runTspCompile({ command: fakeCommand("ok"), source: "config" }, dir())).toEqual({ ok: true });
+    });
+
+    it("not-runnable: a missing executable (ENOENT) names the command, the resolution source, and the fix", () => {
+      const result = runTspCompile({ command: ["/nonexistent/bin/tsp"], source: "config" }, dir());
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.kind).toBe("not-runnable");
+      expect(result.message).toMatch(/^TypeSpec compiler not runnable: `\/nonexistent\/bin\/tsp compile main\.tsp --no-emit` \(resolved via "tspCommand" from \.specify\/em-sdd\.json\)/);
+      expect(result.message).toMatch(/Install @typespec\/compiler .* or set "tspCommand"/);
+    });
+
+    it("not-runnable: a cached script with a broken interpreter path (the stale-npx symptom)", () => {
+      const d = dir();
+      const script = path.join(d, "tsp");
+      writeFileSync(script, "#!/usr/local/bin/node-that-does-not-exist\nconsole.log('never');\n", { mode: 0o755 });
+      const result = runTspCompile({ command: [script], source: "local-bin" }, d);
+      expect(result).toMatchObject({ ok: false, kind: "not-runnable" });
+      if (!result.ok) expect(result.message).toMatch(/resolved via the nearest node_modules\/\.bin\/tsp/);
+    });
+
+    it("not-runnable: exit 127 / 'command not found' from a wrapper", () => {
+      const result = runTspCompile({ command: fakeCommand("not-found"), source: "config" }, dir());
+      expect(result).toMatchObject({ ok: false, kind: "not-runnable" });
+      if (!result.ok) expect(result.message).toContain("tsp: command not found");
+    });
+
+    it("library-unresolvable: TypeSpec's import-not-found names the library and says the TypeSpec may be valid", () => {
+      const result = runTspCompile({ command: fakeCommand("missing-lib"), source: "config" }, dir());
+      expect(result).toMatchObject({ ok: false, kind: "library-unresolvable" });
+      if (result.ok) return;
+      expect(result.message).toMatch(/^TypeSpec library @typespec\/http not resolvable from /);
+      expect(result.message).toMatch(/The TypeSpec may well be valid/);
+      expect(result.message).toMatch(/or set "tspCommand"/);
+    });
+
+    it("compile-errors: a genuine diagnostic is relayed verbatim", () => {
+      const result = runTspCompile({ command: fakeCommand("compile-error"), source: "npx" }, dir());
+      expect(result).toMatchObject({ ok: false, kind: "compile-errors" });
+      if (result.ok) return;
+      expect(result.message).toMatch(/^TypeSpec compile errors in /);
+      expect(result.message).toContain("error unknown-identifier: Unknown identifier utcDateTimee");
+    });
+
+    it("runs the compile in the typespec dir with the configured prefix followed by the compile args", () => {
+      const d = dir();
+      const log = path.join(d, "calls.log");
+      const prev = process.env.FAKE_TSP_LOG;
+      process.env.FAKE_TSP_LOG = log;
+      try {
+        expect(runTspCompile({ command: fakeCommand("ok"), source: "config" }, d).ok).toBe(true);
+      } finally {
+        if (prev === undefined) delete process.env.FAKE_TSP_LOG;
+        else process.env.FAKE_TSP_LOG = prev;
+      }
+      const call = JSON.parse(readFileSync(log, "utf8").trim());
+      expect(call.argv).toEqual(["--mode=ok", "compile", "main.tsp", "--no-emit"]);
+      expect(realpathSync(call.cwd)).toBe(realpathSync(d));
+    });
+  });
+
+  describe("through the design gate", () => {
+    it("acceptance: in a repo with no node_modules, a configured tspCommand makes the gate pass for valid TypeSpec", () => {
+      const componentDir = buildComponentDir({ withTypespec: true });
+      writeConfig(componentDir, JSON.stringify({ tspCommand: fakeCommand("ok") }));
+      expect(gate(componentDir)).toEqual([]);
+    });
+
+    it("a local node_modules/.bin/tsp at the repo root is found from a nested component dir, with no config", () => {
+      const repo = mkTmp("tsp-gate-repo-");
+      const componentDir = path.join(repo, "design", "event-model");
+      mkdirSync(componentDir, { recursive: true });
+      cpSync(modelPath, path.join(componentDir, "model.em"));
+      cpSync(path.join(fixturesDir, "slices"), path.join(componentDir, "slices"), { recursive: true });
+      cpSync(path.join(fixturesDir, "typespec"), path.join(componentDir, "typespec"), { recursive: true });
+      const bin = path.join(repo, "node_modules", ".bin", "tsp");
+      mkdirSync(path.dirname(bin), { recursive: true });
+      writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${fakeTsp}" --mode=ok "$@"\n`, { mode: 0o755 });
+      expect(gate(componentDir, repo)).toEqual([]);
+    });
+
+    it("acceptance: a broken compiler produces the 'not runnable' message, not a raw exec error", () => {
+      const componentDir = buildComponentDir({ withTypespec: true });
+      writeConfig(componentDir, JSON.stringify({ tspCommand: ["/nonexistent/bin/tsp"] }));
+      const failures = gate(componentDir);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatch(/^TypeSpec compiler not runnable:/);
+      expect(failures[0]).not.toMatch(/spawnSync|ENOENT/);
+    });
+
+    it("an unresolvable library is its own failure class in the gate", () => {
+      const componentDir = buildComponentDir({ withTypespec: true });
+      writeConfig(componentDir, JSON.stringify({ tspCommand: fakeCommand("missing-lib") }));
+      expect(gate(componentDir).map((f) => f.split(" ").slice(0, 3).join(" "))).toEqual(["TypeSpec library @typespec/http"]);
+    });
+
+    it("a malformed tspCommand is a gate FAILURE and the fallback resolver is NOT run in its place", () => {
+      const componentDir = buildComponentDir({ withTypespec: true });
+      writeConfig(componentDir, JSON.stringify({ tspCommand: "mise exec -- tsp" }));
+      const failures = gate(componentDir);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatch(/invalid "tspCommand" value "mise exec -- tsp" -- expected a non-empty array/);
+    });
+
+    it("tspCommand is irrelevant under contractSource none (no compile runs, even a broken one)", () => {
+      const componentDir = buildComponentDir({ withTypespec: false });
+      writeConfig(componentDir, JSON.stringify({ contractSource: "none", tspCommand: ["/nonexistent/bin/tsp"] }));
+      expect(gate(componentDir)).toEqual([]);
+    });
+
+    it("the failure reaches assertPreconditions' combined BridgeError", () => {
+      const componentDir = buildComponentDir({ withTypespec: true });
+      writeConfig(componentDir, JSON.stringify({ tspCommand: fakeCommand("compile-error") }));
+      expect(() =>
+        assertPreconditions({
+          repoRoot: componentDir,
+          modelPath: path.join(componentDir, "model.em"),
+          exportModel,
+          slices: [recordPingSlice()],
+        })
+      ).toThrow(/TypeSpec compile errors in .*unknown-identifier/s);
+    });
   });
 });
