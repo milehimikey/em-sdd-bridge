@@ -330,6 +330,12 @@ Intent, Command/Event/Read-Model tables, Invariants, Scenarios, Alternate &
 Error Flows, Non-Functional Requirements, Open Questions -- since none of
 that is in `em export` by design (frontmatter only, never the body).
 
+The doc's H1 may be either `# Slice: <Name>` (what `em slice new` writes) or
+the pattern-prefixed `# State Change Slice: <Name>` / `# State View Slice:
+<Name>` / `# Automation Slice: <Name>` / `# Translation Slice: <Name>` form
+that skill-authored docs use (#23); the prefix is dropped from the name. A
+doc with no such H1 at all takes its name from `em export`'s `slice.name`.
+
 ### Readiness: delegated to `em validate --slice-ready`
 
 The bridge no longer implements its own "ready to implement" predicate.

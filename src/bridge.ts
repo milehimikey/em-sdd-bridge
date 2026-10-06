@@ -256,7 +256,14 @@ export function runBridge(argv: string[]): BridgeResult {
   }
 
   const primaryLocated = locateSliceDoc(exportModel, modelPath, primary.key, docOverride);
-  const primaryDoc = parseSliceDoc(readFileSync(primaryLocated.absolutePath, "utf8"), primary.pattern, primaryLocated.relativePath);
+  // `primary.name` is the export's model-derived display name -- the fallback
+  // when the doc has no `# Slice:` H1 at all (#23).
+  const primaryDoc = parseSliceDoc(
+    readFileSync(primaryLocated.absolutePath, "utf8"),
+    primary.pattern,
+    primaryLocated.relativePath,
+    primary.name
+  );
 
   const shortName = primary.key;
   const description = primaryDoc.intent || primaryDoc.name;
