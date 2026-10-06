@@ -18,7 +18,8 @@
  *
  * Policy (#13): the design-completeness gate is always on; the events-first
  * prerequisite is OPT-IN, enabled only by `"eventsFirst": true` in
- * `.specify/em-sdd.json` (absent file or absent field = off). Trade-off:
+ * `.specify/em-sdd.json` (absent file or absent field = off; parsed by
+ * lib/bridge-config.ts). Trade-off:
  * events-first buys determinism for teams that practice contract-first design
  * (or reverse-document already-built code) -- the event types are proven to
  * exist before a spec is generated. But it inverts the usual spec -> plan ->
@@ -33,6 +34,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { BridgeError } from "./bridge-error.js";
+import { readBridgeConfig, type BridgeConfig } from "./bridge-config.js";
 import { locateSliceDoc } from "./locate-slice-doc.js";
 import type { ExportedModel, ExportedSlice } from "./export-model.js";
 
@@ -62,86 +64,6 @@ export interface PreconditionOptions {
   slices: ExportedSlice[];
   /** Shared `--doc` override, if the caller passed one. */
   docOverride?: string;
-}
-
-const CONTRACT_SOURCES = ["typespec", "none"] as const;
-export type ContractSource = (typeof CONTRACT_SOURCES)[number];
-
-/**
- * Repo-committed bridge configuration at `.specify/em-sdd.json`. Two keys:
- *
- *   { "contractSource": "typespec" | "none", "eventsFirst": boolean }
- *
- * `contractSource` declares where this repo's generated contracts come from,
- * which decides whether the design-completeness gate's TypeSpec checks
- * (typespec/main.tsp exists + compiles) apply:
- *
- *   - "typespec" (the DEFAULT when the file is absent): current behavior,
- *     unchanged -- the checks run and their absence is a failure. Existing
- *     consumers keep their full gate without touching anything.
- *   - "none": this repo satisfies its contracts some other way (e.g.
- *     hand-authored event classes in the source tree); the TypeSpec checks are
- *     skipped. Every OTHER design-completeness check (slice docs resolvable,
- *     one .em model, slices/ populated) still runs.
- *
- * `eventsFirst` opts in to the events-first prerequisite (#13): when `true`,
- * every event a slice emits or consumes must already exist as a real type
- * declaration in the source tree before the bridge runs. DEFAULT is `false`
- * (absent file or absent field) -- see the module doc comment for the
- * trade-off. It is independent of `contractSource`.
- *
- * Deliberately a committed file, not a CLI flag: which convention a repo
- * follows is repo policy, decided in review -- not a per-invocation choice an
- * autonomous agent could quietly vary (the same reasoning that keeps these
- * gates in code at all; see the module doc comment). Unreadable JSON or an
- * invalid value is a gate FAILURE, never a silent fallback -- fail-closed.
- * The file is parsed once; failures are kept per owner so each gate reports
- * only what concerns it (`fileFailure` concerns both).
- */
-interface BridgeConfig {
-  contractSource: ContractSource;
-  eventsFirst: boolean;
-  /** Config file unreadable as JSON -- reported by both gates. */
-  fileFailure?: string;
-  contractSourceFailure?: string;
-  eventsFirstFailure?: string;
-}
-
-function readBridgeConfig(repoRoot: string): BridgeConfig {
-  const config: BridgeConfig = { contractSource: "typespec", eventsFirst: false };
-  const configPath = path.join(repoRoot, ".specify", "em-sdd.json");
-  if (!existsSync(configPath)) return config;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(configPath, "utf8"));
-  } catch (err) {
-    config.fileFailure = `${configPath} exists but is not valid JSON: ${err instanceof Error ? err.message : String(err)}`;
-    return config;
-  }
-  const record = (parsed ?? {}) as Record<string, unknown>;
-
-  const rawSource = record["contractSource"];
-  if (rawSource !== undefined) {
-    if (typeof rawSource !== "string" || !CONTRACT_SOURCES.includes(rawSource as ContractSource)) {
-      config.contractSourceFailure =
-        `${configPath}: unknown "contractSource" value ${JSON.stringify(rawSource)} -- ` +
-        `expected one of: ${CONTRACT_SOURCES.join(", ")}.`;
-    } else {
-      config.contractSource = rawSource as ContractSource;
-    }
-  }
-
-  const rawEventsFirst = record["eventsFirst"];
-  if (rawEventsFirst !== undefined) {
-    if (typeof rawEventsFirst !== "boolean") {
-      config.eventsFirstFailure =
-        `${configPath}: invalid "eventsFirst" value ${JSON.stringify(rawEventsFirst)} -- ` +
-        `expected a boolean (true to require events-first, false to skip it).`;
-    } else {
-      config.eventsFirst = rawEventsFirst;
-    }
-  }
-  return config;
 }
 
 /**
@@ -393,7 +315,7 @@ export function checkDesignCompleteness(opts: PreconditionOptions, config?: Brid
   // declared contract source is TypeSpec (the default) -- see
   // readBridgeConfig: repos whose contracts aren't TypeSpec-generated (e.g.
   // hand-authored event classes) declare `"contractSource": "none"` in
-  // .specify/em-sdd.json and skip ONLY these two checks.
+  // .specify/em-sdd.json (lib/bridge-config.ts) and skip ONLY these two checks.
   const cfg = config ?? readBridgeConfig(opts.repoRoot);
   if (cfg.fileFailure) failures.push(cfg.fileFailure);
   if (cfg.contractSourceFailure) failures.push(cfg.contractSourceFailure);
@@ -455,11 +377,12 @@ export function checkEventsFirst(opts: PreconditionOptions, config?: BridgeConfi
 }
 
 /**
- * Runs both preconditions (config parsed once) and throws ONE BridgeError listing every failure
- * from both gates, or returns silently if everything passes.
+ * Runs both preconditions and throws ONE BridgeError listing every failure
+ * from both gates, or returns silently if everything passes. `config` is the
+ * run's already-parsed `.specify/em-sdd.json` (bridge.ts reads it once and
+ * shares it); callers without one get it read here.
  */
-export function assertPreconditions(opts: PreconditionOptions): void {
-  const config = readBridgeConfig(opts.repoRoot);
+export function assertPreconditions(opts: PreconditionOptions, config: BridgeConfig = readBridgeConfig(opts.repoRoot)): void {
   // A malformed config file is reported by both gates; list it once.
   const failures = [
     ...new Set([...checkDesignCompleteness(opts, config), ...checkEventsFirst(opts, config)]),
