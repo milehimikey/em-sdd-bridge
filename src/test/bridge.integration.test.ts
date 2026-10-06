@@ -182,3 +182,66 @@ describe.skipIf(!hasEm())("runBridge constitution advisory (MIL-203)", () => {
     );
   });
 });
+
+// #24: required sections that parse empty refuse the run instead of handing
+// spec-kit a near-empty spec. `--doc` points the render at a doc written to
+// an unknown template while the readiness gate (which ignores --doc) still
+// sees the ready `record-ping` doc. Deliberately WITHOUT the design gate
+// bypass mattering: --skip-design-gate does not skip this check.
+describe.skipIf(!hasEm())("runBridge refuses a doc whose required sections parsed empty (#24)", () => {
+  const tmpDirs: string[] = [];
+  afterEach(() => {
+    while (tmpDirs.length) rmSync(tmpDirs.pop()!, { recursive: true, force: true });
+  });
+  function repoWithConfig(config: unknown): string {
+    const dir = mkdtempSync(path.join(tmpdir(), "bridge-section-aliases-"));
+    tmpDirs.push(dir);
+    cpSync(repoRoot, dir, { recursive: true });
+    mkdirSync(path.join(dir, ".specify"), { recursive: true });
+    writeFileSync(path.join(dir, ".specify", "em-sdd.json"), JSON.stringify(config), "utf8");
+    return dir;
+  }
+  const args = (repo: string) => [
+    "record-ping",
+    "--repo-root",
+    repo,
+    "--model",
+    modelPath,
+    "--doc",
+    "slices/nothing-maps.md",
+    "--dry-run",
+    "--skip-design-gate",
+  ];
+
+  it("refuses, naming the empty fields, the headings tried, and the headings found", () => {
+    let message = "";
+    try {
+      runBridge(args(repoRoot));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toMatch(/slices\/nothing-maps\.md: required content for a state-change slice parsed empty \(4\)/);
+    expect(message).toContain("- Command / Input [command]:");
+    expect(message).toContain('Headings found in the doc: "Why", "What Happens", "Outcome", "Examples"');
+  });
+
+  it("succeeds once the doc's headings are configured as sectionAliases", () => {
+    const repo = repoWithConfig({
+      sectionAliases: { intent: ["Why"], command: ["What Happens"], events: ["Outcome"], scenarios: ["Examples"] },
+    });
+    const result = runBridge(args(repo));
+    expect(result.content).toContain("# Feature Specification: Nothing Maps");
+    expect(result.content).toContain("Given x, **When** y, **Then** z.".replace("Given", "**Given**"));
+    expect(result.content).toContain('**Input**: User description: "Prose that the bridge cannot find because the heading is unknown."');
+  });
+
+  it("a malformed sectionAliases refuses even under --skip-design-gate (never parses with a half-applied table)", () => {
+    const repo = repoWithConfig({ sectionAliases: { intent: [] } });
+    expect(() => runBridge(args(repo))).toThrow(/invalid "sectionAliases" -- "intent" must be a non-empty array/);
+  });
+
+  it("--symlink mode is exempt: nothing is rendered from the parse", () => {
+    const result = runBridge([...args(repoRoot), "--symlink"]);
+    expect(result.symlinkTarget).toMatch(/nothing-maps\.md$/);
+  });
+});

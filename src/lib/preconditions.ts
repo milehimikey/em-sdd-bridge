@@ -319,6 +319,9 @@ export function checkDesignCompleteness(opts: PreconditionOptions, config?: Brid
   const cfg = config ?? readBridgeConfig(opts.repoRoot);
   if (cfg.fileFailure) failures.push(cfg.fileFailure);
   if (cfg.contractSourceFailure) failures.push(cfg.contractSourceFailure);
+  // A bad `sectionAliases` would silently reproduce the empty-parse problem
+  // it exists to fix (#24), so it is a design-gate failure like the others.
+  if (cfg.sectionAliasesFailure) failures.push(cfg.sectionAliasesFailure);
   if (cfg.contractSource === "typespec") {
     const typespecDir = path.join(componentDir, "typespec");
     const mainTsp = path.join(typespecDir, "main.tsp");
