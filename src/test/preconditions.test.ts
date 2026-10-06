@@ -605,6 +605,19 @@ describe("contractSource configuration (.specify/em-sdd.json)", () => {
     expect(failures.some((f) => /not valid JSON/.test(f))).toBe(true);
   });
 
+  it('a malformed "sectionAliases" is a gate FAILURE (#24) -- it would otherwise silently reproduce the empty parse it exists to fix', () => {
+    const componentDir = buildComponentDir({ withTypespec: false });
+    withConfig(componentDir, JSON.stringify({ contractSource: "none", sectionAliases: { purpose: ["Why"] } }));
+    const failures = checkDesignCompleteness({
+      repoRoot: componentDir,
+      modelPath: path.join(componentDir, "model.em"),
+      exportModel,
+      slices: [recordPingSlice()],
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/invalid "sectionAliases" -- unknown section key "purpose"/);
+  });
+
   it("absent config keeps the default: TypeSpec checks required (unchanged behavior)", () => {
     const componentDir = buildComponentDir({ withTypespec: false });
     const failures = checkDesignCompleteness({

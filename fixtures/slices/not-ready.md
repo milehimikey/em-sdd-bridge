@@ -8,10 +8,48 @@ version: 1
 # Slice: Not Ready Example
 
 ## Intent
-Fixture for the "not ready-to-implement" refusal path -- this doc is deliberately left at Status: reviewed.
+Fixture for the "not ready-to-implement" refusal path -- this doc is deliberately left at Status: reviewed, with an otherwise complete State Change body so bypassing the readiness gate (#15) exercises rendering, not the required-content check (#24).
 
 ## Trigger & Actor
-n/a
+The Integrator submits a ping from the Ping Console whenever they want to record a heartbeat.
+
+## Command / Input
+**Command:** `Record Ping`
+
+| Field | Type | Required | Rules / Validation |
+|-------|------|----------|--------------------|
+| postedAt | Instant | yes | Must not be in the future relative to server time. |
+| source | string | yes | Non-empty; max 200 characters. |
+
+## Event(s) Emitted
+**Event:** `Ping Recorded` → context `Pings`
+
+| Field | Type | Immutable Fact? | Source / Notes |
+|-------|------|-----------------|----------------|
+| postedAt | Instant | yes | Copied verbatim from the command. |
+| source | string | yes | Copied verbatim from the command. |
+
+## Read Model / View
+<!-- omitted: pure State Change slice, no view produced here -->
+
+## Invariants / Business Rules
+- **INV-1:** Reject Record Ping when postedAt is in the future.
+
+## Scenarios (Given / When / Then)
+- **Happy path** — Given no prior pings, When the Integrator records a ping with a valid postedAt and source, Then a Ping Recorded event is emitted and Recent Pings reflects it.
+- **Rejected (INV-1)** — Given the current server time, When the Integrator records a ping with postedAt in the future, Then the command is rejected with a validation error; no event.
+
+## Alternate & Error Flows
+- Duplicate submissions with the same postedAt and source are accepted as distinct pings (no idempotency key defined for this slice).
+
+## Non-Functional Requirements
+- **Security / authz:** Any authenticated Integrator caller may invoke this command.
+- **PII & compliance:** none
+- **Performance / SLA:** none
+
+## Dependencies & Read Models Affected
+- **Upstream events this slice relies on:** none
+- **Downstream read models / slices affected:** Recent Pings
 
 ## Open Questions
-<!-- none -->
+- [x] Should postedAt default to server-received time if omitted? Resolved: no, it is always required from the caller.
