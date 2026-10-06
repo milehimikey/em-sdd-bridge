@@ -258,8 +258,18 @@ fail-closed:
   legacy file; `slices/` must exist and contain at least one `*.md`; and,
   when the repo's declared contract source is TypeSpec (the default -- see
   `.specify/em-sdd.json` below), `typespec/main.tsp` must exist and
-  `npx tsp compile main.tsp --no-emit` must exit 0. An unavailable TypeSpec
-  compiler is itself a failure, never a silent skip.
+  `tsp compile main.tsp --no-emit` must exit 0 in that directory. The
+  compiler is resolved in this order (#25): the `tspCommand` configured in
+  `.specify/em-sdd.json`; the nearest `node_modules/.bin/tsp`, walking up
+  from the typespec dir to the repo root; then `npx --no-install tsp`
+  (`--no-install` on purpose: an unrelated `tsp` package exists on the
+  public registry). A failure names its cause and the fix: **compiler not
+  runnable** (missing executable, broken interpreter path from a stale npx
+  cache, exit 126/127), **library not resolvable** (the compiler ran but an
+  import such as `@typespec/http` did not resolve from the typespec dir, so
+  the TypeSpec may well be valid), or **compile errors** (the diagnostics,
+  verbatim). An unavailable TypeSpec compiler is itself a failure, never a
+  silent skip.
 - **Events-first** (opt-in, off by default as of 0.6.0 -- see
   `eventsFirst` below): every event the slice(s) emit or consume must already
   exist as a real type declaration (`class`, `data class`, `record`,
@@ -284,7 +294,8 @@ the tests. **Never use it for a real slice implementation.**
 {
   "contractSource": "typespec",
   "eventsFirst": false,
-  "sectionAliases": { "readModel": ["Projection"], "sourceEvents": ["Inputs"] }
+  "sectionAliases": { "readModel": ["Projection"], "sourceEvents": ["Inputs"] },
+  "tspCommand": ["mise", "exec", "--", "tsp"]
 }
 ```
 
@@ -304,6 +315,13 @@ at `.specify/em-sdd.json` (relative to `--repo-root`):
   `sourceEvents`, `invariants`, `scenarios`, `alternateErrorFlows`,
   `nonFunctional`, `openQuestions`); values are non-empty lists of
   headings. An unknown key or a malformed value is a gate failure (#24).
+- `tspCommand` (array of strings, default none): the TypeSpec compiler the
+  design gate runs, as an argv prefix -- `["mise", "exec", "--", "tsp"]`,
+  `["/path/to/tsp"]` -- for repos whose compiler is provided by a toolchain
+  manager or a global install rather than a local `node_modules`. Absent,
+  the gate resolves the compiler itself (see the design-completeness bullet
+  above). Anything but a non-empty array of non-empty strings is a gate
+  failure, and no fallback compiler is tried in its place (#25).
 
 **Events-first trade-off.** It gives determinism to teams that practice
 contract-first design or reverse-document already-built code: the types are
@@ -315,7 +333,7 @@ file is absent, the default is `"typespec"` -- existing consumers keep the
 full gate untouched. This is deliberately a committed file, not a CLI flag:
 which convention a repo follows is repo policy decided in review, not a
 per-invocation choice an autonomous agent could quietly vary. Malformed JSON,
-an unknown `contractSource`, a non-boolean `eventsFirst`, or a malformed `sectionAliases` is a gate **failure**, never a silent fallback.
+an unknown `contractSource`, a non-boolean `eventsFirst`, a malformed `sectionAliases`, or a malformed `tspCommand` is a gate **failure**, never a silent fallback.
 
 ### Slice-doc metadata: sourced from `em export`, not parsed here
 
@@ -440,9 +458,14 @@ command, and event sharing one slice, per the `em` >=1.7.1 shape) so a real
 `em export` + real `create-new-feature.sh --dry-run` integration test is
 exercised end to end (skips gracefully if `em` isn't on PATH).
 `fixtures/typespec/main.tsp` is a minimal, dependency-free TypeSpec model;
-positive-path compile assertions are gated on a `hasTsp()` helper (mirroring
-`hasEm()`) and skip gracefully when `@typespec/compiler`'s `tsp` binary isn't
-installed.
+positive-path compile assertions against a *real* compiler are gated on a
+`hasTsp()` helper (mirroring `hasEm()`) and skip gracefully when
+`@typespec/compiler`'s `tsp` binary isn't installed.
+`fixtures/fake-tsp/fake-tsp.mjs` stands in for the compiler under a
+`--mode=` flag (clean exit, TypeSpec's `import-not-found` diagnostic, a
+genuine compile diagnostic, exit 127), so the resolver, each failure class,
+and the configured-`tspCommand` path are tested deterministically in every
+environment (#25).
 
 `src/test/allocate-feature.test.ts` builds scratch git repos (temp dirs, not
 the real checkout) with the installed spec-kit scripts copied in, to prove

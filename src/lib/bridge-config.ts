@@ -8,7 +8,8 @@
  *   {
  *     "contractSource": "typespec" | "none",
  *     "eventsFirst": boolean,
- *     "sectionAliases": { "<field>": ["<Heading>", ...], ... }
+ *     "sectionAliases": { "<field>": ["<Heading>", ...], ... },
+ *     "tspCommand": ["<argv>", ...]
  *   }
  *
  * `contractSource` declares where this repo's generated contracts come from,
@@ -38,6 +39,13 @@
  * values are failures, not ignored -- a typo here would otherwise silently
  * reproduce the empty-parse problem the key exists to fix.
  *
+ * `tspCommand` (#25) is the TypeSpec compiler the design-completeness gate
+ * runs, as an argv prefix (`["mise", "exec", "--", "tsp"]`, `["/path/to/tsp"]`)
+ * for repos whose compiler is not under a local node_modules. Absent, the
+ * gate looks for the nearest node_modules/.bin/tsp and then falls back to
+ * `npx --no-install tsp` -- see lib/tsp-compiler.ts. Must be a non-empty
+ * array of non-empty strings; anything else is a failure.
+ *
  * Deliberately a committed file, not a CLI flag: which convention a repo
  * follows is repo policy, decided in review -- not a per-invocation choice an
  * autonomous agent could quietly vary (the same reasoning that keeps the
@@ -61,11 +69,14 @@ export interface BridgeConfig {
   eventsFirst: boolean;
   /** Extra heading aliases per parsed field; only the keys the repo set. */
   sectionAliases: Partial<SectionAliases>;
+  /** TypeSpec compiler argv prefix; undefined = resolve automatically. */
+  tspCommand?: string[];
   /** Config file unreadable as JSON -- concerns every consumer. */
   fileFailure?: string;
   contractSourceFailure?: string;
   eventsFirstFailure?: string;
   sectionAliasesFailure?: string;
+  tspCommandFailure?: string;
 }
 
 export function bridgeConfigPath(repoRoot: string): string {
@@ -104,6 +115,17 @@ export function readBridgeConfig(repoRoot: string): BridgeConfig {
         `expected a boolean (true to require events-first, false to skip it).`;
     } else {
       config.eventsFirst = rawEventsFirst;
+    }
+  }
+
+  const rawTsp = record["tspCommand"];
+  if (rawTsp !== undefined) {
+    if (!Array.isArray(rawTsp) || rawTsp.length === 0 || !rawTsp.every((v) => typeof v === "string" && v.trim().length > 0)) {
+      config.tspCommandFailure =
+        `${configPath}: invalid "tspCommand" value ${JSON.stringify(rawTsp)} -- expected a non-empty array of ` +
+        `non-empty strings (the compiler argv prefix, e.g. ["mise", "exec", "--", "tsp"] or ["/path/to/tsp"]).`;
+    } else {
+      config.tspCommand = rawTsp.map((v: string) => v.trim());
     }
   }
 
