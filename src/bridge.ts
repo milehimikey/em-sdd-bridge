@@ -77,7 +77,7 @@ import { findRepoRoot } from "./lib/repo.js";
 import { resolveModelPath, runEmExport } from "./lib/em-runner.js";
 import { validateSliceKeys } from "./lib/pattern-validate.js";
 import { locateSliceDoc } from "./lib/locate-slice-doc.js";
-import { parseSliceDoc } from "./lib/slice-doc.js";
+import { assertSliceDocComplete, mergeSectionAliases, parseSliceDoc } from "./lib/slice-doc.js";
 import { assertSliceReady } from "./lib/slice-readiness.js";
 import { allocateFeature, assertNoExistingFeature } from "./lib/allocate-feature.js";
 import { buildSpecMarkdown, buildTraceabilityLine } from "./lib/spec-builder.js";
@@ -256,14 +256,32 @@ export function runBridge(argv: string[]): BridgeResult {
   }
 
   const primaryLocated = locateSliceDoc(exportModel, modelPath, primary.key, docOverride);
+  // A malformed "sectionAliases" is reported by the design gate above; this
+  // re-check only fires under --skip-design-gate, where parsing with a
+  // half-applied alias table would be the silent empty-parse failure #24
+  // exists to end.
+  if (bridgeConfig.sectionAliasesFailure) throw new BridgeError(bridgeConfig.sectionAliasesFailure);
+  const sectionAliases = mergeSectionAliases(bridgeConfig.sectionAliases);
+
   // `primary.name` is the export's model-derived display name -- the fallback
   // when the doc has no `# Slice:` H1 at all (#23).
   const primaryDoc = parseSliceDoc(
     readFileSync(primaryLocated.absolutePath, "utf8"),
     primary.pattern,
     primaryLocated.relativePath,
-    primary.name
+    primary.name,
+    { sectionAliases }
   );
+  // Fail closed on a doc whose required sections parsed empty (#24) -- a
+  // successful run on a near-empty spec is exactly what spec-kit must not be
+  // handed. Unlike the design gate's TypeSpec / source-tree checks this needs
+  // nothing from the environment, only the doc, so --skip-design-gate does
+  // NOT bypass it. --symlink mode is exempt: it renders nothing from the
+  // parse (the doc itself becomes the spec), so an unrecognised heading
+  // costs nothing downstream.
+  if (!symlinkMode) {
+    assertSliceDocComplete(primaryDoc, primaryLocated.relativePath, sectionAliases);
+  }
 
   const shortName = primary.key;
   const description = primaryDoc.intent || primaryDoc.name;

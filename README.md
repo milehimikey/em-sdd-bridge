@@ -278,10 +278,14 @@ It exists ONLY so this package's own test suite can exercise bridge mechanics
 source tree or a TypeSpec compiler is available in the environment running
 the tests. **Never use it for a real slice implementation.**
 
-### `.specify/em-sdd.json`: contract source and events-first policy
+### `.specify/em-sdd.json`: contract source, events-first policy, heading aliases
 
 ```json
-{ "contractSource": "typespec", "eventsFirst": false }
+{
+  "contractSource": "typespec",
+  "eventsFirst": false,
+  "sectionAliases": { "readModel": ["Projection"], "sourceEvents": ["Inputs"] }
+}
 ```
 
 at `.specify/em-sdd.json` (relative to `--repo-root`):
@@ -293,6 +297,13 @@ at `.specify/em-sdd.json` (relative to `--repo-root`):
 - `eventsFirst` (boolean, **default `false`**): when `true`, every event a
   slice emits or consumes must already exist as a real type declaration
   before the bridge generates a spec (#13).
+- `sectionAliases` (object, default none): extra H2 headings the slice-doc
+  parser accepts for each field, **appended** to the built-in aliases listed
+  under "Slice-doc body: heading aliases" below. Keys are the field names
+  (`intent`, `triggerActor`, `command`, `events`, `readModel`,
+  `sourceEvents`, `invariants`, `scenarios`, `alternateErrorFlows`,
+  `nonFunctional`, `openQuestions`); values are non-empty lists of
+  headings. An unknown key or a malformed value is a gate failure (#24).
 
 **Events-first trade-off.** It gives determinism to teams that practice
 contract-first design or reverse-document already-built code: the types are
@@ -304,7 +315,7 @@ file is absent, the default is `"typespec"` -- existing consumers keep the
 full gate untouched. This is deliberately a committed file, not a CLI flag:
 which convention a repo follows is repo policy decided in review, not a
 per-invocation choice an autonomous agent could quietly vary. Malformed JSON,
-an unknown `contractSource`, or a non-boolean `eventsFirst` is a gate **failure**, never a silent fallback.
+an unknown `contractSource`, a non-boolean `eventsFirst`, or a malformed `sectionAliases` is a gate **failure**, never a silent fallback.
 
 ### Slice-doc metadata: sourced from `em export`, not parsed here
 
@@ -335,6 +346,46 @@ the pattern-prefixed `# State Change Slice: <Name>` / `# State View Slice:
 <Name>` / `# Automation Slice: <Name>` / `# Translation Slice: <Name>` form
 that skill-authored docs use (#23); the prefix is dropped from the name. A
 doc with no such H1 at all takes its name from `em export`'s `slice.name`.
+
+### Slice-doc body: heading aliases and required content
+
+Sections are found by heading, matched case- and whitespace-insensitively
+against a per-field alias list (#24). The first alias is the em template's
+own heading; the rest are headings seen in docs written to other templates.
+HTML comments (`<!-- none -->`) never count as content.
+
+| Field | Headings accepted |
+|---|---|
+| intent | Intent, Purpose, Goal |
+| triggerActor | Trigger & Actor, Trigger / Actor, Trigger, Actor, Read Trigger, Query |
+| command | Command / Input, Command, Input |
+| events | Event(s) Emitted, Events Emitted, Event Emitted, Events, Event |
+| readModel | Read Model / View, Read Model, View, Projection |
+| sourceEvents | Source Events, Data Source, Built From Events, Consumed Events |
+| invariants | Invariants / Business Rules, Invariants, Business Rules, Rules |
+| scenarios | Scenarios (Given / When / Then), Scenarios, Acceptance Scenarios, Given / When / Then |
+| alternateErrorFlows | Alternate & Error Flows, Alternate / Error Flows, Alternate Flows, Error Flows |
+| nonFunctional | Non-Functional Requirements, Non-Functional, NFRs, NFR |
+| openQuestions | Open Questions, Questions |
+
+Extend any list with `sectionAliases` in `.specify/em-sdd.json` (above).
+The read model's name comes from a `**View:**`, `**Read Model:**` or
+`**Name:**` bullet, else the first backticked name in the section; its
+"built from" events come from the `built from events:` clause on that line,
+else from a `sourceEvents` section (one event per bullet or table row).
+Invariant ids are `INV-<n>` or domain-prefixed, `INV-EO-1` / `INV-ACCT-19`
+(`INV-(?:[A-Z][A-Z0-9]*-)*\d+`).
+
+**Required content, fail-closed.** A doc whose required fields parse empty
+refuses the run rather than handing spec-kit a near-empty spec. The failure
+names each empty field, the headings tried for it, what counts as content,
+and the headings the doc actually has. Required per pattern: Intent and at
+least one scenario for every pattern; the command and event for
+`state-change`; the read model for `state-view`; the event for
+`automation`; nothing further for `translation`. Invariants, alternate
+flows, NFRs and open questions are always optional. `--symlink` mode is
+exempt (nothing is rendered from the parse); `--skip-design-gate` does
+**not** bypass this check, since it needs nothing from the environment.
 
 ### Readiness: delegated to `em validate --slice-ready`
 
