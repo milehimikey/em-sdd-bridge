@@ -82,6 +82,7 @@ import { assertSliceReady } from "./lib/slice-readiness.js";
 import { allocateFeature, assertNoExistingFeature } from "./lib/allocate-feature.js";
 import { buildSpecMarkdown, buildTraceabilityLine } from "./lib/spec-builder.js";
 import { assertPreconditions } from "./lib/preconditions.js";
+import { readBridgeConfig } from "./lib/bridge-config.js";
 import { BridgeError } from "./lib/bridge-error.js";
 import type { ExportedSlice } from "./lib/export-model.js";
 
@@ -195,6 +196,12 @@ export function runBridge(argv: string[]): BridgeResult {
   // lib/check-constitution.ts.
   warnIfConstitutionUnfilled(repoRoot);
 
+  // `.specify/em-sdd.json`, parsed once for the whole run and shared with
+  // every consumer (gates now; parser aliases and the TypeSpec command next).
+  // Never throws: a malformed file surfaces as a gate failure below, so
+  // --skip-design-gate keeps its historical "bypass everything" meaning.
+  const bridgeConfig = readBridgeConfig(repoRoot);
+
   // Scaffold flag-compatibility check runs next, before any em/model work --
   // cheap (reads two script files), and an incompatible scaffold invalidates
   // the feature-allocation step regardless of what the model/slice doc say.
@@ -245,11 +252,18 @@ export function runBridge(argv: string[]): BridgeResult {
     );
   } else {
     const gateSlices: ExportedSlice[] = [primary];
-    assertPreconditions({ repoRoot, modelPath, exportModel, slices: gateSlices, docOverride });
+    assertPreconditions({ repoRoot, modelPath, exportModel, slices: gateSlices, docOverride }, bridgeConfig);
   }
 
   const primaryLocated = locateSliceDoc(exportModel, modelPath, primary.key, docOverride);
-  const primaryDoc = parseSliceDoc(readFileSync(primaryLocated.absolutePath, "utf8"), primary.pattern, primaryLocated.relativePath);
+  // `primary.name` is the export's model-derived display name -- the fallback
+  // when the doc has no `# Slice:` H1 at all (#23).
+  const primaryDoc = parseSliceDoc(
+    readFileSync(primaryLocated.absolutePath, "utf8"),
+    primary.pattern,
+    primaryLocated.relativePath,
+    primary.name
+  );
 
   const shortName = primary.key;
   const description = primaryDoc.intent || primaryDoc.name;

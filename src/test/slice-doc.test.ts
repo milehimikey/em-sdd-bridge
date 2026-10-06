@@ -54,8 +54,51 @@ describe("parseSliceDoc", () => {
     expect(doc.pattern).toBe("automation");
   });
 
-  it("throws when the title heading is missing", () => {
+  it("throws when the title heading is missing and no fallback name is supplied", () => {
     expect(() => parseSliceDoc("no title here", "state-change")).toThrow(BridgeError);
+    expect(() => parseSliceDoc("no title here", "state-change", "slices/x.md", "   ")).toThrow(
+      /slices\/x\.md: missing "# Slice: <Name>" \(or "# <Pattern> Slice: <Name>"\) heading/
+    );
+  });
+
+  // #23: skill-authored docs title themselves `# <Pattern> Slice: <Name>`;
+  // every such doc used to be rejected before parsing started.
+  describe("title heading forms (#23)", () => {
+    const body = loadFixture("record-ping.md");
+    const retitle = (title: string) => body.replace(/^# Slice: Record Ping$/m, title);
+
+    it("still parses the plain `# Slice: <Name>` form", () => {
+      expect(parseSliceDoc(body, "state-change").name).toBe("Record Ping");
+    });
+
+    it.each([
+      ["# State View Slice: Provisioners", "Provisioners"],
+      ["# State Change Slice: Create Account", "Create Account"],
+      ["# Automation Slice: Notify On Ping", "Notify On Ping"],
+      ["# Translation Slice: Import Ledger Entry", "Import Ledger Entry"],
+      ["#  state change  Slice:   Create Account  ", "Create Account"],
+    ])("accepts %s and takes the name without the prefix", (title, expected) => {
+      const doc = parseSliceDoc(retitle(title), "state-change");
+      expect(doc.name).toBe(expected);
+      // The rest of the body still parses -- the title change is isolated.
+      expect(doc.command?.name).toBe("Record Ping");
+    });
+
+    it("an unknown prefix is NOT a slice title (the bridge never guesses a name)", () => {
+      expect(() => parseSliceDoc(retitle("# Saga Slice: Thing"), "state-change")).toThrow(BridgeError);
+    });
+
+    it("falls back to the caller-supplied name (em export's slice.name) when the H1 is absent", () => {
+      const noTitle = body.replace(/^# Slice: Record Ping$/m, "");
+      const doc = parseSliceDoc(noTitle, "state-change", "slices/record-ping.md", "Record Ping");
+      expect(doc.name).toBe("Record Ping");
+      expect(doc.command?.name).toBe("Record Ping");
+    });
+
+    it("prefers the H1 over the fallback when both exist", () => {
+      const doc = parseSliceDoc(body, "state-change", "slices/record-ping.md", "Something Else");
+      expect(doc.name).toBe("Record Ping");
+    });
   });
 
   it("still parses Open Questions from the body -- unaffected by frontmatter retirement, needed for spec-builder's [NEEDS CLARIFICATION] rendering", () => {

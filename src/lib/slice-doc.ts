@@ -169,12 +169,37 @@ function parseBulletList(text: string): string[] {
     .filter(Boolean);
 }
 
-export function parseSliceDoc(markdown: string, pattern: SlicePattern, sourceLabel = "<slice doc>"): ParsedSliceDoc {
-  const titleMatch = markdown.match(/^#\s*Slice:\s*(.+)\s*$/m);
-  if (!titleMatch) {
-    throw new BridgeError(`${sourceLabel}: missing "# Slice: <Name>" heading`);
+/**
+ * The H1. `em slice new` writes `# Slice: <Name>`; skill-authored docs also
+ * use a pattern-prefixed form (`# State View Slice: Provisioners`,
+ * `# State Change Slice: Create Account`), which used to be rejected outright
+ * and made whole models unusable with the bridge (#23). The optional prefix is
+ * one of the four Event Modeling pattern names, case-insensitive; the name is
+ * taken WITHOUT it.
+ */
+const TITLE_RE = /^#\s*(?:(?:State\s+Change|State\s+View|Automation|Translation)\s+)?Slice:\s*(.+?)\s*$/im;
+
+/**
+ * @param fallbackName  Used when the doc has no `# Slice:` H1 at all --
+ *   bridge.ts passes the exported slice's display name, which em derives from
+ *   the model itself (the same source the doc's frontmatter is joined from),
+ *   so the H1 is a convenience, not the only authority. Absent (or blank) a
+ *   title-less doc is still an error: the bridge never invents a name.
+ */
+export function parseSliceDoc(
+  markdown: string,
+  pattern: SlicePattern,
+  sourceLabel = "<slice doc>",
+  fallbackName?: string
+): ParsedSliceDoc {
+  const titleMatch = markdown.match(TITLE_RE);
+  const name = titleMatch?.[1].trim() || fallbackName?.trim() || "";
+  if (!name) {
+    throw new BridgeError(
+      `${sourceLabel}: missing "# Slice: <Name>" (or "# <Pattern> Slice: <Name>") heading, and no slice name ` +
+        `was available from \`em export\` to fall back on`
+    );
   }
-  const name = titleMatch[1].trim();
 
   const sections = splitSections(markdown);
 
