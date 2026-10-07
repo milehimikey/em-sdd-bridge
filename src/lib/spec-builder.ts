@@ -9,7 +9,7 @@
 
 import { existsSync } from "node:fs";
 import path from "node:path";
-import type { ParsedSliceDoc } from "./slice-doc.js";
+import type { ParsedSliceDoc, Scenario } from "./slice-doc.js";
 import type { SlicePattern } from "./export-model.js";
 
 export interface BuildSpecOptions {
@@ -63,8 +63,23 @@ function stripTrailingPeriod(s: string): string {
   return s.replace(/\.\s*$/, "");
 }
 
-function boldGwt(text: string): string {
-  return text
+/** Renders a scenario with its Given/When/Then keywords bold. The nested
+ *  form (#30) is rendered from its clauses; the one-line form has the first
+ *  occurrence of each keyword bolded -- after stripping any bold the author
+ *  already put around a keyword, so `**Given:**` in source never becomes
+ *  `****Given**:**` in the spec. */
+function renderScenario(s: Scenario): string {
+  if (s.given !== undefined || s.when !== undefined || s.then !== undefined) {
+    return [
+      s.given !== undefined && `**Given** ${s.given}`,
+      s.when !== undefined && `**When** ${s.when}`,
+      s.then !== undefined && `**Then** ${s.then}`,
+    ]
+      .filter(Boolean)
+      .join(", ");
+  }
+  return s.text
+    .replace(/\*\*(Given|When|Then):?\*\*:?/g, "$1")
     .replace(/\bGiven\b/, "**Given**")
     .replace(/\bWhen\b/, "**When**")
     .replace(/\bThen\b/, "**Then**");
@@ -144,15 +159,20 @@ export function buildSpecMarkdown(opts: BuildSpecOptions): string {
   lines.push(`**Why this priority**: ${firstSentence(primaryDoc.intent)}`, "");
 
   const happy = primaryDoc.scenarios.find((s) => s.kind === "happy");
+  // Nested-form happy path (#30): the When clause is the test's action and
+  // the Then clause its check. One-line form keeps its historical sentence.
   lines.push(
-    `**Independent Test**: Can be fully tested by ${happy ? happy.text : "exercising the slice's happy path"} ` +
-      `and delivers the recorded fact / read-model change described above.`,
+    happy?.when !== undefined && happy.then !== undefined
+      ? `**Independent Test**: Can be fully tested by exercising the happy path (${happy.when}) and checking that ` +
+          `${stripTrailingPeriod(happy.then)}.`
+      : `**Independent Test**: Can be fully tested by ${happy ? happy.text : "exercising the slice's happy path"} ` +
+          `and delivers the recorded fact / read-model change described above.`,
     ""
   );
 
   lines.push(`**Acceptance Scenarios**:`, "");
   primaryDoc.scenarios.forEach((s, i) => {
-    lines.push(`${i + 1}. ${boldGwt(s.text)}`);
+    lines.push(`${i + 1}. ${renderScenario(s)}`);
   });
   lines.push("", "---", "");
 

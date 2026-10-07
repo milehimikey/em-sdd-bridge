@@ -34,9 +34,18 @@ export interface EventFieldRow {
 
 export interface Scenario {
   label: string;
+  /** The scenario as one sentence. For the one-line form this is the
+   *  authored text after the label; for the nested form (#30) it is built
+   *  from the clauses: `Given <g>, When <w>, Then <t>` -- plain words, no
+   *  bold, so renderers can mark the keywords up themselves. */
   text: string;
   kind: "happy" | "rejected" | "edge";
   invId?: string;
+  /** Set only for the nested form (`- **Given:** ...` sub-bullets under the
+   *  label); each is the clause text without its bold keyword. */
+  given?: string;
+  when?: string;
+  then?: string;
 }
 
 export interface OpenQuestion {
@@ -217,45 +226,110 @@ function stripBullet(line: string): string {
 }
 
 /**
- * Invariant id grammar (#24): `INV-<n>` or domain-prefixed `INV-EO-1`,
- * `INV-ACCT-19`, `INV-A1-B2-3` -- em's own template now shows
- * `INV-{{MNEMONIC}}-n`. Each prefix segment starts with an uppercase letter;
- * the final segment is the number. Source text (no anchors, no groups) so it
- * can be embedded in both the invariant-bullet and rejected-scenario regexes.
+ * Invariant id grammar (#24, widened in #30): `INV-` then one or more
+ * alphanumeric segments -- `INV-1`, `INV-EO-1`, `INV-ACCT-19`, and the
+ * template's letter-suffixed sub-invariant `INV-CHK-3a`. This is em's own
+ * INV_TOKEN_RE (src/cli/coverage.ts) minus its word boundaries, which the
+ * surrounding bullet / label syntax supplies here; em is the authority on
+ * what counts as an id, and `em coverage` must find the same ids this parser
+ * does. Source text (no anchors, no groups) so it can be embedded in both the
+ * invariant-bullet and rejected-scenario regexes.
  */
-const INV_ID = "INV-(?:[A-Z][A-Z0-9]*-)*\\d+";
+const INV_ID = "INV-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*";
 
+const SCENARIO_LABEL_RE = /^\*\*(.+?)\*\*\s*(?:(?:—|--|-)\s*(.*))?$/;
+const GWT_CLAUSE_RE = /^\*\*(Given|When|Then):?\*\*:?\s*(.*)$/i;
+
+/**
+ * Two authored shapes (#30), both accepted:
+ *
+ *   one-line (the pre-2026 template):
+ *     - **Happy path** — Given a, When b, Then c.
+ *
+ *   nested (em's current template -- each clause its own sub-bullet):
+ *     - **Happy path**
+ *       - **Given:** a
+ *       - **When:** b
+ *       - **Then:** c.
+ *
+ * A top-level bullet starts a scenario; an indented `- **Given/When/Then:**`
+ * bullet fills that clause; any other indented or unindented non-bullet line
+ * continues whatever is open (the clause, else the label line's own text), so
+ * wrapped prose stays attached. The nested form used to be folded into one
+ * run-on string with the bold markers left in, which the spec renderer then
+ * re-bolded into `****Given**:**`.
+ */
 function parseScenarios(text: string): Scenario[] {
   if (!text) return [];
-  const scenarios: Scenario[] = [];
-  // Bullets may wrap onto continuation lines; join lines that don't start a new bullet.
-  const lines = text.split("\n");
-  const joined: string[] = [];
-  for (const line of lines) {
-    if (/^-\s/.test(line) || joined.length === 0) {
-      joined.push(line);
-    } else if (line.trim() !== "") {
-      joined[joined.length - 1] += " " + line.trim();
-    }
+  interface Draft {
+    label: string;
+    rest: string;
+    clauses: Partial<Record<"given" | "when" | "then", string>>;
+    open: "given" | "when" | "then" | "rest";
   }
-  for (const raw of joined) {
-    const bullet = stripBullet(raw);
-    if (!bullet) continue;
-    const m = bullet.match(/^\*\*(.+?)\*\*\s*(?:—|--|-)\s*(.+)$/);
-    if (!m) continue;
-    const [, label, rest] = m;
+  const drafts: Draft[] = [];
+  let current: Draft | undefined;
+  for (const raw of text.split("\n")) {
+    if (raw.trim() === "") continue;
+    const topLevel = /^-\s+(.*)$/.exec(raw);
+    if (topLevel) {
+      const m = topLevel[1].trim().match(SCENARIO_LABEL_RE);
+      if (m) {
+        current = { label: m[1].trim(), rest: (m[2] ?? "").trim(), clauses: {}, open: "rest" };
+        drafts.push(current);
+      } else {
+        current = undefined; // a bullet that is not a scenario label; skip it and its children
+      }
+      continue;
+    }
+    if (!current) continue;
+    const nested = /^\s+-\s+(.*)$/.exec(raw);
+    if (nested) {
+      const clause = nested[1].trim().match(GWT_CLAUSE_RE);
+      if (clause) {
+        const key = clause[1].toLowerCase() as "given" | "when" | "then";
+        current.clauses[key] = clause[2].trim();
+        current.open = key;
+      } else {
+        // An indented bullet that is not a G/W/T clause: keep it with whatever is open.
+        append(current, nested[1].trim());
+      }
+      continue;
+    }
+    append(current, raw.trim());
+  }
+
+  function append(d: Draft, more: string): void {
+    if (d.open === "rest") d.rest = [d.rest, more].filter(Boolean).join(" ");
+    else d.clauses[d.open] = [d.clauses[d.open], more].filter(Boolean).join(" ");
+  }
+
+  const scenarios: Scenario[] = [];
+  for (const d of drafts) {
+    const { given, when, then } = d.clauses;
+    const structured = given !== undefined || when !== undefined || then !== undefined;
+    const sentence = structured
+      ? [given && `Given ${given}`, when && `When ${when}`, then && `Then ${then}`].filter(Boolean).join(", ")
+      : d.rest;
+    if (!sentence) continue;
     let kind: Scenario["kind"] = "edge";
     let invId: string | undefined;
-    if (/^happy path$/i.test(label.trim())) {
+    if (/^happy path$/i.test(d.label)) {
       kind = "happy";
     } else {
-      const invMatch = label.match(new RegExp(`rejected\\s*\\((${INV_ID})\\)`, "i"));
+      const invMatch = d.label.match(new RegExp(`rejected\\s*\\((${INV_ID})\\)`, "i"));
       if (invMatch) {
         kind = "rejected";
         invId = invMatch[1];
       }
     }
-    scenarios.push({ label: label.trim(), text: rest.trim(), kind, invId });
+    scenarios.push({
+      label: d.label,
+      text: sentence,
+      kind,
+      invId,
+      ...(structured ? { given, when, then } : {}),
+    });
   }
   return scenarios;
 }
@@ -460,7 +534,7 @@ const EMPTY_MEANS: Record<SectionKey, string> = {
   readModel: "no view name (a `**View:**` / `**Read Model:**` / `**Name:**` bullet, or a backticked name)",
   sourceEvents: "no event names",
   invariants: "no `**INV-n:**` bullets",
-  scenarios: "no `- **Label** — Given ... When ... Then ...` bullets",
+  scenarios: "no `- **Label** — Given ... When ... Then ...` bullets, nor `- **Label**` bullets with nested `- **Given:**` / `- **When:**` / `- **Then:**` sub-bullets",
   alternateErrorFlows: "no bullets",
   nonFunctional: "no labelled bullets",
   openQuestions: "no `- [ ]` / `- [x]` items",

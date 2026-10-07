@@ -176,8 +176,8 @@ describe("heading aliases and INV ids (#24)", () => {
     expect(doc.scenarios[0]).toMatchObject({ kind: "rejected", invId: id });
   });
 
-  it("does not accept lowercase or digit-led prefix segments as invariant ids", () => {
-    const md = "# Slice: X\n## Invariants\n- **INV-eo-1:** nope.\n- **INV-1X-2:** nope.\n- **INV-X:** nope.\n";
+  it("does not accept a bare INV- or a non-INV token as an invariant id", () => {
+    const md = "# Slice: X\n## Invariants\n- **INV-:** nope.\n- **REQ-1:** nope.\n- **INV 1:** nope.\n";
     expect(parseSliceDoc(md, "state-change").invariants).toEqual([]);
   });
 
@@ -253,4 +253,89 @@ describe("required-section completeness (#24)", () => {
       /Headings found in the doc: \(no ## headings at all\)/
     );
   });
+});
+
+// #30: em's current template nests Given/When/Then as sub-bullets under the
+// scenario label; the old parser folded them into one run-on string with the
+// bold markers left in. INV ids may also carry a letter suffix (INV-CHK-3a).
+describe("nested Given/When/Then scenarios and em's INV grammar (#30)", () => {
+  const doc = parseSliceDoc(loadFixture("checkout-nested-gwt.md"), "state-change");
+
+  it("parses each scenario into given/when/then clauses, joining wrapped clause lines", () => {
+    expect(doc.scenarios).toHaveLength(4);
+    expect(doc.scenarios[0]).toEqual({
+      label: "Happy path",
+      kind: "happy",
+      invId: undefined,
+      given: "a cart with two items",
+      when: "the shopper checks out",
+      then: "Checkout Completed is recorded and the Order Summary shows the new order.",
+      text: "Given a cart with two items, When the shopper checks out, Then Checkout Completed is recorded and the Order Summary shows the new order.",
+    });
+    // No bold markers survive into the clause text or the sentence.
+    for (const s of doc.scenarios) expect(s.text).not.toContain("**");
+  });
+
+  it("classifies Rejected (INV-...) labels, including a letter-suffixed id", () => {
+    expect(doc.scenarios[1]).toMatchObject({ kind: "rejected", invId: "INV-CHK-1" });
+    expect(doc.scenarios[2]).toMatchObject({ kind: "rejected", invId: "INV-CHK-3a" });
+    expect(doc.scenarios[3]).toMatchObject({ kind: "edge", invId: undefined, label: "Stale cart" });
+  });
+
+  it("a nested bullet that is not a G/W/T clause stays with the open clause", () => {
+    expect(doc.scenarios[3].then).toBe(
+      "the command is rejected with a stale-cart reason. Note: the UI refreshes the cart and lets the shopper retry."
+    );
+  });
+
+  it("parses letter-suffixed invariant ids and ignores nested rationale bullets", () => {
+    expect(doc.invariants).toEqual([
+      { id: "INV-CHK-1", text: "Reject Checkout when the cart is empty." },
+      { id: "INV-CHK-3a", text: "Reject Checkout when the cart total is negative." },
+    ]);
+  });
+
+  it("the ## Delta section's Requirement / Scenario blocks are not mistaken for invariants or scenarios", () => {
+    expect(doc.invariants.map((i) => i.id)).not.toContain("INV-CHK-3a-from-delta");
+    expect(doc.scenarios.map((s) => s.label)).not.toContain("negative total");
+    expect(doc.headings[0]).toBe("Delta");
+  });
+
+  it("the one-line form still parses exactly as before, with no clause fields", () => {
+    const old = parseSliceDoc(loadFixture("record-ping.md"), "state-change");
+    expect(old.scenarios[0]).toMatchObject({ kind: "happy" });
+    expect(old.scenarios[0].given).toBeUndefined();
+    expect(old.scenarios[0].text).toMatch(/^Given no prior pings, When /);
+  });
+
+  it("the two forms can be mixed in one section", () => {
+    const md = [
+      "# Slice: X",
+      "## Scenarios",
+      "- **Happy path** — Given a, When b, Then c.",
+      "- **Rejected (INV-X-1)**",
+      "  - **Given:** d",
+      "  - **When:** e",
+      "  - **Then:** f.",
+    ].join("\n");
+    const mixed = parseSliceDoc(md, "state-change").scenarios;
+    expect(mixed).toHaveLength(2);
+    expect(mixed[0].given).toBeUndefined();
+    expect(mixed[1]).toMatchObject({ given: "d", when: "e", then: "f.", invId: "INV-X-1" });
+  });
+
+  it("a label bullet with neither inline text nor clauses is skipped", () => {
+    const md = "# Slice: X\n## Scenarios\n- **Placeholder**\n- **Happy path** — Given a, When b, Then c.\n";
+    expect(parseSliceDoc(md, "state-change").scenarios.map((s) => s.label)).toEqual(["Happy path"]);
+  });
+
+  it.each(["INV-1", "INV-EO-1", "INV-ACCT-19", "INV-CHK-3a", "INV-eo-1", "INV-1X-2"])(
+    "accepts %s, exactly as em's INV_TOKEN_RE does",
+    (id) => {
+      const md = `# Slice: X\n## Invariants\n- **${id}:** holds.\n## Scenarios\n- **Rejected (${id})** — Given a, When b, Then c.\n`;
+      const d = parseSliceDoc(md, "state-change");
+      expect(d.invariants).toEqual([{ id, text: "holds." }]);
+      expect(d.scenarios[0]).toMatchObject({ kind: "rejected", invId: id });
+    }
+  );
 });

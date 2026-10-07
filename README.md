@@ -391,8 +391,15 @@ The read model's name comes from a `**View:**`, `**Read Model:**` or
 `**Name:**` bullet, else the first backticked name in the section; its
 "built from" events come from the `built from events:` clause on that line,
 else from a `sourceEvents` section (one event per bullet or table row).
-Invariant ids are `INV-<n>` or domain-prefixed, `INV-EO-1` / `INV-ACCT-19`
-(`INV-(?:[A-Z][A-Z0-9]*-)*\d+`).
+Invariant ids follow em's own grammar (`INV_TOKEN_RE` in em's
+`src/cli/coverage.ts`): `INV-` then alphanumeric segments, so `INV-1`,
+`INV-EO-1`, `INV-ACCT-19` and the letter-suffixed sub-invariant `INV-CHK-3a`
+all parse, in both the invariant bullet and a `Rejected (INV-...)` label.
+Scenarios may be authored either as one line, `- **Happy path** — Given a,
+When b, Then c.`, or in em's current nested shape with `- **Given:**` /
+`- **When:**` / `- **Then:**` sub-bullets under the label (#30); the nested
+form is parsed into clauses and rendered as `**Given** a, **When** b,
+**Then** c`.
 
 **Required content, fail-closed.** A doc whose required fields parse empty
 refuses the run rather than handing spec-kit a near-empty spec. The failure

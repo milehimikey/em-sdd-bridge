@@ -199,3 +199,51 @@ describe("buildSpecMarkdown", () => {
     });
   });
 });
+
+// #30: nested Given/When/Then scenarios render from their clauses; the
+// one-line form's regex-bolding is made safe against pre-bolded keywords.
+describe("nested Given/When/Then rendering (#30)", () => {
+  const content = buildSpecMarkdown({
+    branchName: "001-checkout",
+    date: "2026-10-07",
+    keys: ["checkout"],
+    pattern: "state-change",
+    primaryDoc: loadDoc("checkout-nested-gwt.md", "state-change"),
+    sliceDocRelPaths: ["slices/checkout-nested-gwt.md"],
+    modelName: "model.em",
+  });
+
+  it("renders each acceptance scenario as bold Given/When/Then clauses with no doubled asterisks", () => {
+    expect(content).toContain(
+      "1. **Given** a cart with two items, **When** the shopper checks out, **Then** Checkout Completed is recorded and the Order Summary shows the new order."
+    );
+    expect(content).toContain("2. **Given** an empty cart, **When** the shopper checks out, **Then** rejected with reason; no event.");
+    expect(content).not.toMatch(/\*\*\*\*|\*\*Given:\*\*|\*\*When:\*\*|\*\*Then:\*\*/);
+  });
+
+  it("builds the Independent Test from the happy path's When and Then clauses", () => {
+    expect(content).toContain(
+      "**Independent Test**: Can be fully tested by exercising the happy path (the shopper checks out) and checking that " +
+        "Checkout Completed is recorded and the Order Summary shows the new order."
+    );
+  });
+
+  it("carries the letter-suffixed invariant into an FR", () => {
+    expect(content).toMatch(/- \*\*FR-\d{3}\*\*: System MUST reject Checkout when the cart total is negative \(INV-CHK-3a\)/);
+  });
+
+  it("one-line form: keywords an author already bolded are not double-bolded", () => {
+    const doc = loadDoc("record-ping.md", "state-change");
+    doc.scenarios = [{ label: "Happy path", kind: "happy", text: "**Given:** a, **When** b, Then c." }];
+    const out = buildSpecMarkdown({
+      branchName: "001-x",
+      date: "2026-10-07",
+      keys: ["record-ping"],
+      pattern: "state-change",
+      primaryDoc: doc,
+      sliceDocRelPaths: ["slices/record-ping.md"],
+      modelName: "model.em",
+    });
+    expect(out).toContain("1. **Given** a, **When** b, **Then** c.");
+  });
+});
