@@ -339,3 +339,76 @@ describe("nested Given/When/Then scenarios and em's INV grammar (#30)", () => {
     }
   );
 });
+
+// #32: a bold-label PARAGRAPH followed by top-level **Given** / **When** /
+// **Then** bullets (keyword colon optional) is a third scenario shape.
+describe("paragraph-label scenarios with top-level clause bullets (#32)", () => {
+  const doc = parseSliceDoc(loadFixture("record-outcome-paragraph.md"), "state-change");
+
+  it("parses the paragraph label and the clause bullets, with or without a colon on the keyword", () => {
+    expect(doc.scenarios).toHaveLength(2);
+    expect(doc.scenarios[0]).toMatchObject({
+      label: "Outcome recorded for a completed execution",
+      given: "an execution that has started",
+      when: "the provisioner records an outcome",
+      then: "the outcome is stored and returned by id",
+      text: "Given an execution that has started, When the provisioner records an outcome, Then the outcome is stored and returned by id",
+    });
+    expect(doc.scenarios[1]).toMatchObject({ given: "an execution that has not started", then: "the command is rejected; no event" });
+    for (const s of doc.scenarios) expect(s.text).not.toContain("**");
+    expect(missingRequiredSections(doc)).toEqual([]);
+  });
+
+  it("a Rejected (INV-...) paragraph label is a rejection even with a trailing description", () => {
+    expect(doc.scenarios[1]).toMatchObject({ kind: "rejected", invId: "INV-RO-1", label: "Rejected (INV-RO-1): execution not started" });
+  });
+
+  it("with no explicit 'Happy path' label, the first non-rejected scenario is the happy path", () => {
+    expect(doc.scenarios[0].kind).toBe("happy");
+    const rejectedFirst = parseSliceDoc(
+      "# Slice: X\n## Scenarios\n**Rejected (INV-X-1)**\n- **Given** a\n- **When** b\n- **Then** no.\n**Works**\n- **Given** c\n- **When** d\n- **Then** yes.\n",
+      "state-change"
+    ).scenarios;
+    expect(rejectedFirst.map((s) => s.kind)).toEqual(["rejected", "happy"]);
+  });
+
+  it("an explicit 'Happy path' label always wins over the first-scenario rule", () => {
+    const md = "# Slice: X\n## Scenarios\n**Edge first**\n- **Given** a\n- **When** b\n- **Then** c.\n**Happy path**\n- **Given** d\n- **When** e\n- **Then** f.\n";
+    expect(parseSliceDoc(md, "state-change").scenarios.map((s) => s.kind)).toEqual(["edge", "happy"]);
+  });
+
+  it("the one-line and nested fixtures keep their explicit kinds (no new happy path is invented when one is labelled)", () => {
+    const nested = parseSliceDoc(loadFixture("checkout-nested-gwt.md"), "state-change").scenarios;
+    expect(nested.map((s) => s.kind)).toEqual(["happy", "rejected", "rejected", "edge"]);
+    const oneLine = parseSliceDoc(loadFixture("record-ping.md"), "state-change").scenarios;
+    expect(oneLine.map((s) => s.kind)).toEqual(["happy", "rejected"]);
+  });
+
+  it("bare clause groups with no label at all parse as numbered scenarios, split at each Given", () => {
+    const md = "# Slice: X\n## Scenarios\n- **Given** a\n- **When** b\n- **Then** c.\n- **Given** d\n- **When** e\n- **Then** f.\n";
+    const scenarios = parseSliceDoc(md, "state-change").scenarios;
+    expect(scenarios.map((s) => [s.label, s.given])).toEqual([
+      ["Scenario 1", "a"],
+      ["Scenario 2", "d"],
+    ]);
+  });
+
+  it("wrapped clause text and a non-clause bullet stay with the open clause in the paragraph form", () => {
+    const md = "# Slice: X\n## Scenarios\n**Label**\n- **Given** a long\n  precondition\n- **When** b\n- **Then** c\n- and the audit log records it\n";
+    const [s] = parseSliceDoc(md, "state-change").scenarios;
+    expect(s.given).toBe("a long precondition");
+    expect(s.then).toBe("c and the audit log records it");
+  });
+
+  it("a bold-only paragraph that is just a keyword is not a label", () => {
+    const md = "# Slice: X\n## Scenarios\n**Label**\n**Given**\n- **When** b\n- **Then** c\n";
+    const [s] = parseSliceDoc(md, "state-change").scenarios;
+    expect(s.label).toBe("Label");
+    expect(s.given).toBeUndefined();
+  });
+
+  it("the completeness message points at --symlink for docs whose behaviour lives in tables and invariants", () => {
+    const md = "# Slice: X\n## Command / Input\n**Command:** `Do`\n## Event(s) Emitted\n**Event:** `Done` → context `C`\n";
+    expect(() => assertSliceDocComplete(parseSliceDoc(md, "state-change"))).toThrow(/use --symlink: spec\.md then links to the slice doc itself/);
+  });
+});

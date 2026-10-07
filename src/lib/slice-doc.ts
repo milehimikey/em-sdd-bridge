@@ -240,24 +240,41 @@ const INV_ID = "INV-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*";
 const SCENARIO_LABEL_RE = /^\*\*(.+?)\*\*\s*(?:(?:—|--|-)\s*(.*))?$/;
 const GWT_CLAUSE_RE = /^\*\*(Given|When|Then):?\*\*:?\s*(.*)$/i;
 
+const PARAGRAPH_LABEL_RE = /^\*\*(.+?)\*\*:?\s*$/;
+
 /**
- * Two authored shapes (#30), both accepted:
+ * Three authored shapes, all accepted:
  *
  *   one-line (the pre-2026 template):
  *     - **Happy path** — Given a, When b, Then c.
  *
- *   nested (em's current template -- each clause its own sub-bullet):
+ *   nested (em's current template -- each clause its own sub-bullet, #30):
  *     - **Happy path**
  *       - **Given:** a
  *       - **When:** b
  *       - **Then:** c.
  *
- * A top-level bullet starts a scenario; an indented `- **Given/When/Then:**`
- * bullet fills that clause; any other indented or unindented non-bullet line
- * continues whatever is open (the clause, else the label line's own text), so
- * wrapped prose stays attached. The nested form used to be folded into one
- * run-on string with the bold markers left in, which the spec renderer then
- * re-bolded into `****Given**:**`.
+ *   paragraph label + top-level clause bullets (#32; keyword colon optional):
+ *     **Outcome recorded for a completed execution**
+ *
+ *     - **Given** an execution that has started
+ *     - **When** the provisioner records an outcome
+ *     - **Then** the outcome is stored and returned by id
+ *
+ * A top-level label bullet or a bold-only paragraph starts a scenario. A
+ * `**Given/When/Then**` bullet -- indented or, for the paragraph form,
+ * top-level -- fills that clause; a top-level `**Given**` with no scenario
+ * open (or when the open one already has its Given) starts a new, unlabelled
+ * scenario, so bare clause groups still parse. Any other line continues
+ * whatever is open (the clause, else the label line's own text), so wrapped
+ * prose stays attached.
+ *
+ * Kind: a label of exactly "Happy path" is the happy path; a label naming
+ * `Rejected (INV-...)` is a rejection; otherwise an edge case -- except that
+ * when NO scenario is labelled "Happy path", the first non-rejected scenario
+ * is taken as the happy path (#32: docs in the paragraph form name their
+ * scenarios descriptively, and the spec's Independent Test and SC-001 need
+ * one). An explicit "Happy path" label always wins.
  */
 function parseScenarios(text: string): Scenario[] {
   if (!text) return [];
@@ -269,34 +286,64 @@ function parseScenarios(text: string): Scenario[] {
   }
   const drafts: Draft[] = [];
   let current: Draft | undefined;
+  const start = (label: string, rest = ""): Draft => {
+    current = { label, rest, clauses: {}, open: "rest" };
+    drafts.push(current);
+    return current;
+  };
+  const fill = (d: Draft, clause: RegExpMatchArray): void => {
+    const key = clause[1].toLowerCase() as "given" | "when" | "then";
+    d.clauses[key] = clause[2].trim();
+    d.open = key;
+  };
   for (const raw of text.split("\n")) {
     if (raw.trim() === "") continue;
     const topLevel = /^-\s+(.*)$/.exec(raw);
     if (topLevel) {
-      const m = topLevel[1].trim().match(SCENARIO_LABEL_RE);
+      const item = topLevel[1].trim();
+      const clause = item.match(GWT_CLAUSE_RE);
+      if (clause) {
+        // Paragraph form (#32) or a bare clause group: a top-level clause
+        // bullet. A Given when the open scenario already has one begins the
+        // next scenario.
+        const key = clause[1].toLowerCase();
+        if (!current || (key === "given" && current.clauses.given !== undefined)) {
+          start(`Scenario ${drafts.length + 1}`);
+        }
+        fill(current!, clause);
+        continue;
+      }
+      const m = item.match(SCENARIO_LABEL_RE);
       if (m) {
-        current = { label: m[1].trim(), rest: (m[2] ?? "").trim(), clauses: {}, open: "rest" };
-        drafts.push(current);
+        start(m[1].trim(), (m[2] ?? "").trim());
+      } else if (current && current.open !== "rest" && !item.startsWith("**")) {
+        // Paragraph form: a plain top-level bullet after the clause bullets
+        // continues the open clause (the author kept writing at that level).
+        append(current, item);
       } else {
         current = undefined; // a bullet that is not a scenario label; skip it and its children
       }
       continue;
     }
-    if (!current) continue;
     const nested = /^\s+-\s+(.*)$/.exec(raw);
     if (nested) {
+      if (!current) continue;
       const clause = nested[1].trim().match(GWT_CLAUSE_RE);
-      if (clause) {
-        const key = clause[1].toLowerCase() as "given" | "when" | "then";
-        current.clauses[key] = clause[2].trim();
-        current.open = key;
-      } else {
-        // An indented bullet that is not a G/W/T clause: keep it with whatever is open.
-        append(current, nested[1].trim());
-      }
+      if (clause) fill(current, clause);
+      // An indented bullet that is not a G/W/T clause: keep it with whatever is open.
+      else append(current, nested[1].trim());
       continue;
     }
-    append(current, raw.trim());
+    const paragraph = raw.trim().match(PARAGRAPH_LABEL_RE);
+    if (paragraph) {
+      // A bold-only paragraph is a scenario label (#32) -- but not when it is
+      // just a bold G/W/T keyword, which is a clause with no text.
+      if (!GWT_CLAUSE_RE.test(raw.trim())) {
+        start(paragraph[1].trim());
+        continue;
+      }
+    }
+    if (current) append(current, raw.trim());
   }
 
   function append(d: Draft, more: string): void {
@@ -330,6 +377,12 @@ function parseScenarios(text: string): Scenario[] {
       invId,
       ...(structured ? { given, when, then } : {}),
     });
+  }
+  // No explicit "Happy path": the first non-rejected scenario stands in (see
+  // the doc comment above).
+  if (scenarios.length > 0 && !scenarios.some((s) => s.kind === "happy")) {
+    const first = scenarios.find((s) => s.kind !== "rejected");
+    if (first) first.kind = "happy";
   }
   return scenarios;
 }
@@ -534,7 +587,9 @@ const EMPTY_MEANS: Record<SectionKey, string> = {
   readModel: "no view name (a `**View:**` / `**Read Model:**` / `**Name:**` bullet, or a backticked name)",
   sourceEvents: "no event names",
   invariants: "no `**INV-n:**` bullets",
-  scenarios: "no `- **Label** — Given ... When ... Then ...` bullets, nor `- **Label**` bullets with nested `- **Given:**` / `- **When:**` / `- **Then:**` sub-bullets",
+  scenarios:
+    "no `- **Label** — Given ... When ... Then ...` bullets, no `- **Label**` bullets with nested `- **Given:**` / `- **When:**` / `- **Then:**` sub-bullets, " +
+    "and no `**Label**` paragraphs followed by top-level `- **Given**` / `- **When**` / `- **Then**` bullets",
   alternateErrorFlows: "no bullets",
   nonFunctional: "no labelled bullets",
   openQuestions: "no `- [ ]` / `- [x]` items",
@@ -606,6 +661,8 @@ export function assertSliceDocComplete(
         .join("\n") +
       `\nHeadings found in the doc: ${found}\n` +
       `Fix: author the missing content, rename the heading to one listed above, or add the doc's heading to ` +
-      `"sectionAliases" in .specify/em-sdd.json, e.g. { "sectionAliases": { "${missing[0].key}": ["<Your Heading>"] } }.`
+      `"sectionAliases" in .specify/em-sdd.json, e.g. { "sectionAliases": { "${missing[0].key}": ["<Your Heading>"] } }. ` +
+      `If this slice's behaviour genuinely lives elsewhere in the doc (field tables, invariants) and you do not want a ` +
+      `rendered spec.md, use --symlink: spec.md then links to the slice doc itself and this check does not apply.`
   );
 }

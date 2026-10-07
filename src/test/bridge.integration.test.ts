@@ -245,3 +245,23 @@ describe.skipIf(!hasEm())("runBridge refuses a doc whose required sections parse
     expect(result.symlinkTarget).toMatch(/nothing-maps\.md$/);
   });
 });
+
+// #32: the paragraph-label scenario shape renders instead of being refused.
+describe.skipIf(!hasEm())("runBridge renders the paragraph-label scenario shape (#32)", () => {
+  it("emission mode produces acceptance scenarios from **Label** paragraphs + top-level clause bullets", () => {
+    const result = runBridge([
+      "record-ping",
+      "--repo-root",
+      repoRoot,
+      "--model",
+      modelPath,
+      "--doc",
+      "slices/record-outcome-paragraph.md",
+      "--dry-run",
+      "--skip-design-gate",
+    ]);
+    expect(result.content).toContain("# Feature Specification: Record Outcome");
+    expect(result.content).toContain("1. **Given** an execution that has started, **When** the provisioner records an outcome");
+    expect(result.content).toMatch(/\(INV-RO-1\)/);
+  });
+});

@@ -395,11 +395,21 @@ Invariant ids follow em's own grammar (`INV_TOKEN_RE` in em's
 `src/cli/coverage.ts`): `INV-` then alphanumeric segments, so `INV-1`,
 `INV-EO-1`, `INV-ACCT-19` and the letter-suffixed sub-invariant `INV-CHK-3a`
 all parse, in both the invariant bullet and a `Rejected (INV-...)` label.
-Scenarios may be authored either as one line, `- **Happy path** — Given a,
-When b, Then c.`, or in em's current nested shape with `- **Given:**` /
-`- **When:**` / `- **Then:**` sub-bullets under the label (#30); the nested
-form is parsed into clauses and rendered as `**Given** a, **When** b,
-**Then** c`.
+Scenarios may be authored in any of three shapes: one line, `- **Happy
+path** — Given a, When b, Then c.`; em's current nested shape with
+`- **Given:**` / `- **When:**` / `- **Then:**` sub-bullets under a label
+bullet (#30); or a bold label *paragraph* followed by top-level `- **Given**`
+/ `- **When**` / `- **Then**` bullets, keyword colon optional (#32). Bare
+clause groups with no label parse as `Scenario N`. Clauses render as
+`**Given** a, **When** b, **Then** c`. A label of exactly `Happy path` marks
+the happy path and `Rejected (INV-...)` a rejection; when no scenario is
+labelled `Happy path`, the first non-rejected one is taken as it, since the
+spec's Independent Test and first Success Criterion need one.
+
+A doc whose behaviour lives only in field tables and invariants, with no
+Intent or Scenarios, is still refused in emission mode (the spec would be
+hollow); the refusal names the sections and points at `--symlink`, where
+nothing is rendered from the parse and the check does not apply (#32).
 
 **Required content, fail-closed.** A doc whose required fields parse empty
 refuses the run rather than handing spec-kit a near-empty spec. The failure
