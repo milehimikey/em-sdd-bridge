@@ -247,3 +247,26 @@ describe("nested Given/When/Then rendering (#30)", () => {
     expect(out).toContain("1. **Given** a, **When** b, **Then** c.");
   });
 });
+
+describe("paragraph-label scenario rendering (#32)", () => {
+  const content = buildSpecMarkdown({
+    branchName: "001-record-outcome",
+    date: "2026-10-07",
+    keys: ["record-outcome"],
+    pattern: "state-change",
+    primaryDoc: loadDoc("record-outcome-paragraph.md", "state-change"),
+    sliceDocRelPaths: ["slices/record-outcome-paragraph.md"],
+    modelName: "model.em",
+  });
+
+  it("renders the clauses bold and treats the first scenario as the happy path", () => {
+    expect(content).toContain(
+      "1. **Given** an execution that has started, **When** the provisioner records an outcome, **Then** the outcome is stored and returned by id"
+    );
+    expect(content).toContain(
+      "**Independent Test**: Can be fully tested by exercising the happy path (the provisioner records an outcome) and checking that the outcome is stored and returned by id."
+    );
+    expect(content).toMatch(/- \*\*SC-001\*\*: The happy-path scenario passes: Given an execution that has started/);
+    expect(content).not.toMatch(/\*\*\*\*/);
+  });
+});
